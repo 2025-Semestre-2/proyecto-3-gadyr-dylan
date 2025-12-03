@@ -1,12 +1,12 @@
 package tests;
-import comandos.ComandosShell;
+import commands.ShellCommands;
 import picocli.CommandLine;
 import java.util.Scanner;
 
 public class ComandosShellTest {
     public static void main(String[] args) {
         try (Scanner scanner = new Scanner(System.in)) {
-            CommandLine cmd = new CommandLine(new ComandosShell());
+            CommandLine cmd = new CommandLine(new ShellCommands());
             
             System.out.println("Shell Interactivo (escribe 'exit' para salir)");
             
