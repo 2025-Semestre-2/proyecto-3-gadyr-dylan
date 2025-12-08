@@ -1650,45 +1650,109 @@ public class FileSystemManager {
             return;
         }
 
-        // Leer contenido actual
+        // Leer contenido actual y cargar en lista
         byte[] currentBytes = fs.readFile(inode);
         String currentContent = new String(currentBytes);
-
-        System.out.println("--- Editando: " + filename + " ---");
-        System.out.println("Comandos: Escribe tu texto. Para salir escribe ':x' en una nueva línea.");
-        System.out.println("--- Contenido Actual ---");
-        System.out.println(currentContent);
-        System.out.println("------------------------");
-
-        StringBuilder newContentBuilder = new StringBuilder(currentContent);
-        // Si no está vacío y no termina en newline, agregar uno para separar lo nuevo
-        if (newContentBuilder.length() > 0 && newContentBuilder.charAt(newContentBuilder.length() - 1) != '\n') {
-            newContentBuilder.append('\n');
+        java.util.List<String> lines = new java.util.ArrayList<>();
+        if (!currentContent.isEmpty()) {
+            String[] splitLines = currentContent.split("\n");
+            for (String s : splitLines) {
+                // split puede dejar un string vacío si termina en \n, pero readFile lee bytes
+                // exactos.
+                // Si el archivo tiene texto, split funciona bien.
+                lines.add(s);
+            }
         }
 
+        // Mostrar contenido inicial con números de línea
+        System.out.println("========= Editando: " + filename + " =========");
+        System.out.println("--- Contenido del archivo ---");
+        printLines(lines);        
+        
         Scanner inputScanner = new Scanner(System.in);
-        // Nota: no cerramos este scanner porque System.in debe seguir abierto para la
-        // shell
+        
+        System.out.println("--- Comandos disponibles ---");
+        System.out.println(" :cl{n}     -> Eliminar línea n");
+        System.out.println(" :cl{n-m}   -> Eliminar rango de líneas n a m");
+        System.out.println(" :x         -> Guardar y salir");
+        System.out.println(" :q         -> Salir sin guardar");
+        System.out.println("Cualquier otro texto se agregará al final.");
+        System.out.println("---------------------------------");
 
         while (true) {
-            System.out.print("> ");
-            String line = inputScanner.nextLine();
+            System.out.print("note> ");
+            String input = inputScanner.nextLine();
 
-            if (line.equals(":x")) {
+            if (input.equals(":x")) {
+                // Guardar
+                StringBuilder sb = new StringBuilder();
+                for (String line : lines) {
+                    sb.append(line).append("\n");
+                }
+                fs.writeFile(inode, sb.toString().getBytes());
+                System.out.println("Cambios guardados.");
                 break;
+            } else if (input.equals(":q")) {
+                System.out.println("Saliendo sin guardar.");
+                break;
+            } else if (input.startsWith(":cl{")) {
+                // Procesar comando de limpieza
+                try {
+                    String params = input.substring(4, input.length() - 1); // remove :cl{ and }
+                    if (params.contains("-")) {
+                        // Rango
+                        String[] parts = params.split("-");
+                        int start = Integer.parseInt(parts[0]);
+                        int end = Integer.parseInt(parts[1]);
+
+                        if (start > end) {
+                            int temp = start;
+                            start = end;
+                            end = temp;
+                        }
+
+                        // Eliminar de atrás para adelante para no afectar índices
+                        // Ajustar a 0-based
+                        int startIdx = Math.max(0, start - 1);
+                        int endIdx = Math.min(lines.size() - 1, end - 1);
+
+                        if (startIdx <= endIdx && endIdx < lines.size()) {
+                            // SubLista view
+                            lines.subList(startIdx, endIdx + 1).clear();
+                            System.out.println("Rango eliminado.");
+                            printLines(lines);
+                        } else {
+                            System.out.println("Rango inválido.");
+                        }
+                    } else {
+                        // Línea simple
+                        int lineNum = Integer.parseInt(params);
+                        int idx = lineNum - 1;
+                        if (idx >= 0 && idx < lines.size()) {
+                            lines.remove(idx);
+                            System.out.println("Línea " + lineNum + " eliminada.");
+                            printLines(lines);
+                        } else {
+                            System.out.println("Número de línea inválido.");
+                        }
+                    }
+                } catch (Exception e) {
+                    System.out.println("Error en comando :cl. Formato: :cl{n} o :cl{n-m}");
+                }
+            } else {
+                // Agregar texto
+                lines.add(input);
             }
-
-            newContentBuilder.append(line).append("\n");
         }
+    }
 
-        System.out.print("¿Desea guardar los cambios? (S/n): ");
-        String confirm = inputScanner.nextLine();
-
-        if (confirm.equalsIgnoreCase("S") || confirm.isEmpty()) {
-            fs.writeFile(inode, newContentBuilder.toString().getBytes());
-            System.out.println("Cambios guardados.");
+    private void printLines(java.util.List<String> lines) {
+        if (lines.isEmpty()) {
+            System.out.println("(Archivo vacío)");
         } else {
-            System.out.println("Cambios descartados.");
+            for (int i = 0; i < lines.size(); i++) {
+                System.out.printf("%3d | %s%n", (i + 1), lines.get(i));
+            }
         }
     }
 
