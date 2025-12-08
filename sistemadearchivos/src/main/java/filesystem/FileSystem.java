@@ -171,6 +171,52 @@ public class FileSystem {
     }
 
     /**
+     * Libera todos los bloques de datos asociados a un inode
+     */
+    public void releaseInodeBlocks(Inode inode) throws IOException {
+        // 1. Liberar bloques directos
+        for (int i = 0; i < FSConstants.DIRECT_POINTERS; i++) {
+            int blockNum = inode.getDirectBlocks()[i];
+            if (blockNum != -1) {
+                freeDataBlock(blockNum);
+                inode.setDirectBlock(i, -1);
+            }
+        }
+
+        // 2. Liberar indirección simple
+        if (inode.getSingleIndirect() != -1) {
+            freeIndirectBlock(inode.getSingleIndirect(), 0); // 0 indicates leaf pointers
+            inode.setSingleIndirect(-1);
+        }
+
+        writeInode(inode);
+    }
+
+    /**
+     * Libera recursivamente bloques indirectos
+     */
+    private void freeIndirectBlock(int blockNum, int level) throws IOException {
+        // Leer bloque de punteros
+        byte[] blockData = readBlock(blockNum);
+        ByteBuffer buffer = ByteBuffer.wrap(blockData);
+
+        int pointersPerBlock = superblock.getBlockSize() / 4;
+        for (int i = 0; i < pointersPerBlock; i++) {
+            int ptr = buffer.getInt();
+            if (ptr != -1 && ptr != 0) { // 0 might be default empty in some contexts, but -1 is standard
+                if (level == 0) {
+                    freeDataBlock(ptr);
+                } else {
+                    freeIndirectBlock(ptr, level - 1);
+                }
+            }
+        }
+
+        // Liberar el bloque de punteros actual
+        freeDataBlock(blockNum);
+    }
+
+    /**
      * Escribe el superblock al disco
      */
     private void writeSuperblock() throws IOException {

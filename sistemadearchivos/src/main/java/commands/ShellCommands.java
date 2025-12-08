@@ -166,7 +166,11 @@ public class ShellCommands implements Runnable {
     public void rm(
             @Option(names = { "-R" }, description = "Eliminación recursiva") boolean recursive,
             @Parameters(description = "Archivos o directorios a eliminar") String[] paths) {
-        // TODO
+        try {
+            fsManager.rm(paths, recursive);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
@@ -179,7 +183,11 @@ public class ShellCommands implements Runnable {
     public void mv(
             @Parameters(index = "0", description = "Origen") String source,
             @Parameters(index = "1", description = "Destino") String destination) {
-        // TODO
+        try {
+            fsManager.mv(source, destination);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**

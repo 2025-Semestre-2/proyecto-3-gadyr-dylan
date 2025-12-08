@@ -245,7 +245,7 @@ public class FileSystemManager {
         List<DirectoryEntry> rootEntries = fs.readDirectoryEntries(rootInode);
 
         int userDirInodeNum = -1;
-        for (DirectoryEntry entry : rootEntries) {            
+        for (DirectoryEntry entry : rootEntries) {
             if (!entry.isFree() && entry.getName().equals("user")) {
                 userDirInodeNum = entry.getInodeNumber();
                 break;
@@ -597,19 +597,321 @@ public class FileSystemManager {
         newFileInode.setLinkCount(1);
 
         // Escribir nuevo inode
+        // Escribir nuevo inode
         fs.writeInode(newFileInode);
 
-        // Actualizar entrada de directorio
+        // Agregar entrada en el directorio
         entries.set(freeEntryIndex, new DirectoryEntry(newInodeNum,
                 FSConstants.TYPE_FILE, filename));
-
         fs.writeDirectoryEntries(currentDirInode, entries);
-
-        System.out.println("Archivo creado");
 
         // Guardar cambios
         fs.unmount();
         fs.mount();
+
+        System.out.println("Archivo '" + filename + "' creado exitosamente");
+    }
+
+    /**
+     * Elimina archivos o directorios
+     */
+    public void rm(String[] paths, boolean recursive) throws IOException {
+        requireAuth();
+
+        for (String path : paths) {
+            try {
+                // Resolver rutas
+                Inode parentInode;
+                String name;
+
+                if (path.contains("/")) {
+                    String parentPath = path.substring(0, path.lastIndexOf("/"));
+                    if (parentPath.isEmpty())
+                        parentPath = "/"; // Root case
+                    name = path.substring(path.lastIndexOf("/") + 1);
+
+                    int parentInodeNum = resolvePath(parentPath);
+                    if (parentInodeNum == -1) {
+                        System.err.println("rm: no se puede borrar '" + path + "': Directorio padre no encontrado");
+                        continue;
+                    }
+                    parentInode = fs.readInode(parentInodeNum);
+                } else {
+                    parentInode = resolveCurrentDirectory();
+                    name = path;
+                }
+
+                List<DirectoryEntry> entries = fs.readDirectoryEntries(parentInode);
+                DirectoryEntry targetEntry = null;
+
+                for (DirectoryEntry entry : entries) {
+                    if (!entry.isFree() && entry.getName().equals(name)) {
+                        targetEntry = entry;
+                        break;
+                    }
+                }
+
+                if (targetEntry == null) {
+                    System.err.println("rm: no se puede borrar '" + path + "': No existe el archivo o directorio");
+                    continue;
+                }
+
+                // Procesar eliminación
+                Inode targetInode = fs.readInode(targetEntry.getInodeNumber());
+                deleteRecursively(parentInode, targetInode, targetEntry.getName(), recursive);
+
+            } catch (IOException e) {
+                System.err.println("rm: error al borrar '" + path + "': " + e.getMessage());
+            }
+        }
+    }
+
+    private void deleteRecursively(Inode parentInode, Inode targetInode, String name, boolean recursive)
+            throws IOException {
+        // Verificar permisos (solo propietario o root)
+        if (!isRoot() && targetInode.getOwnerUid() != currentUser.getUserId()) {
+            throw new IOException("Permiso denegado");
+        }
+
+        if (targetInode.isDirectory()) {
+            // Verificar si está vacío
+            List<DirectoryEntry> entries = fs.readDirectoryEntries(targetInode);
+            boolean isEmpty = true;
+            for (DirectoryEntry entry : entries) {
+                if (!entry.isFree() && !entry.getName().equals(".") && !entry.getName().equals("..")) {
+                    isEmpty = false;
+                    break;
+                }
+            }
+
+            if (!isEmpty && !recursive) {
+                throw new IOException("Es un directorio y no está vacío (use -R)");
+            }
+
+            if (!isEmpty) {
+                // Borrado recursivo
+                for (DirectoryEntry entry : entries) {
+                    if (!entry.isFree() && !entry.getName().equals(".") && !entry.getName().equals("..")) {
+                        Inode childInode = fs.readInode(entry.getInodeNumber());
+                        deleteRecursively(targetInode, childInode, entry.getName(), true);
+                    }
+                }
+            }
+
+            // Actualizar link count del padre (por ".." del hijo)
+            parentInode.setLinkCount(parentInode.getLinkCount() - 1);
+            fs.writeInode(parentInode);
+        }
+
+        // Liberar bloques y el inode
+        fs.releaseInodeBlocks(targetInode);
+        fs.freeInode(targetInode.getInodeNumber());
+
+        // Eliminar entrada del directorio padre
+        removeEntryFromDirectory(parentInode, name);
+
+        System.out.println("Eliminado: " + name);
+    }
+
+    private void removeEntryFromDirectory(Inode parentInode, String name) throws IOException {
+        List<DirectoryEntry> entries = fs.readDirectoryEntries(parentInode);
+        boolean found = false;
+
+        for (int i = 0; i < entries.size(); i++) {
+            DirectoryEntry entry = entries.get(i);
+            if (!entry.isFree() && entry.getName().equals(name)) {
+                // Marcar como libre
+                entries.set(i, new DirectoryEntry());
+                found = true;
+                break;
+            }
+        }
+
+        if (found) {
+            fs.writeDirectoryEntries(parentInode, entries);
+        }
+    }
+
+    /**
+     * Resuelve una ruta (absoluta o relativa) y retorna el número de inode
+     */
+    private int resolvePath(String path) throws IOException {
+        Inode currentInode;
+        String[] parts;
+
+        if (path.startsWith("/")) {
+            currentInode = fs.readInode(FSConstants.ROOT_INODE);
+            if (path.equals("/"))
+                return FSConstants.ROOT_INODE;
+            parts = path.substring(1).split("/");
+        } else {
+            currentInode = resolveCurrentDirectory();
+            parts = path.split("/");
+        }
+
+        for (String part : parts) {
+            if (part.isEmpty() || part.equals("."))
+                continue;
+
+            if (part.equals("..")) {
+                // Handle parent directory
+                // For simplicity, we can read the ".." entry from the current directory
+                List<DirectoryEntry> entries = fs.readDirectoryEntries(currentInode);
+                boolean found = false;
+                for (DirectoryEntry entry : entries) {
+                    if (!entry.isFree() && entry.getName().equals("..")) {
+                        currentInode = fs.readInode(entry.getInodeNumber());
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
+                    throw new IOException("Error resolviendo ruta: .. no encontrado");
+                continue;
+            }
+
+            List<DirectoryEntry> entries = fs.readDirectoryEntries(currentInode);
+            boolean found = false;
+            for (DirectoryEntry entry : entries) {
+                if (!entry.isFree() && entry.getName().equals(part)) {
+                    currentInode = fs.readInode(entry.getInodeNumber());
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+                return -1;
+        }
+
+        return currentInode.getInodeNumber();
+    }
+
+    /**
+     * Mueve o renombra archivos y directorios
+     */
+    public void mv(String sourcePath, String destPath) throws IOException {
+        requireAuth();
+
+        // 1. Resolver Inode origen
+        int sourceInodeNum = resolvePath(sourcePath);
+        if (sourceInodeNum == -1) {
+            System.err.println("mv: no se puede mover '" + sourcePath + "': No existe el archivo o directorio");
+            return;
+        }
+
+        // Obtener nombre y padre del origen
+        String sourceName;
+        Inode sourceParentInode;
+        if (sourcePath.contains("/")) {
+            String parentPath = sourcePath.substring(0, sourcePath.lastIndexOf("/"));
+            if (parentPath.isEmpty())
+                parentPath = "/";
+            sourceName = sourcePath.substring(sourcePath.lastIndexOf("/") + 1);
+            sourceParentInode = fs.readInode(resolvePath(parentPath));
+        } else {
+            sourceName = sourcePath;
+            sourceParentInode = resolveCurrentDirectory();
+        }
+
+        // 2. Resolver destino
+        int destInodeNum = resolvePath(destPath);
+        Inode destParentInode;
+        String newName;
+
+        if (destInodeNum != -1) {
+            // El destino existe...
+            Inode destInode = fs.readInode(destInodeNum);
+            if (destInode.isDirectory()) {
+                // Mover dentro del directorio existente
+                destParentInode = destInode;
+                newName = sourceName;
+
+                // Verificar si ya existe en destino
+                List<DirectoryEntry> destEntries = fs.readDirectoryEntries(destParentInode);
+                if (directoryEntryExists(destEntries, newName)) {
+                    System.err.println("mv: destino '" + newName + "' ya existe en '" + destPath + "'");
+                    return;
+                }
+            } else {
+                // Es un archivo existente... sobreescribir?
+                // Implementación simple: Error
+                System.err.println("mv: destino '" + destPath + "' ya existe y no es un directorio");
+                return;
+            }
+        } else {
+            // El destino no existe, asumimos renombrado/movido a nuevo nombre
+            if (destPath.contains("/")) {
+                String destParentPath = destPath.substring(0, destPath.lastIndexOf("/"));
+                if (destParentPath.isEmpty())
+                    destParentPath = "/";
+                int destParentNum = resolvePath(destParentPath);
+                if (destParentNum == -1) {
+                    System.err.println("mv: directorio destino no existe");
+                    return;
+                }
+                destParentInode = fs.readInode(destParentNum);
+                newName = destPath.substring(destPath.lastIndexOf("/") + 1);
+            } else {
+                destParentInode = resolveCurrentDirectory();
+                newName = destPath;
+            }
+        }
+
+        // 3. Realizar movimiento
+
+        // Remover entrada del padre original
+        removeEntryFromDirectory(sourceParentInode, sourceName);
+
+        // Agregar entrada al nuevo padre
+        // Buscar espacio libre
+        List<DirectoryEntry> destEntries = fs.readDirectoryEntries(destParentInode);
+        int freeIndex = findFreeDirectoryEntry(destEntries);
+
+        DirectoryEntry newEntry = new DirectoryEntry(sourceInodeNum,
+                fs.readInode(sourceInodeNum).getFileType(), newName);
+
+        if (freeIndex != -1) {
+            destEntries.set(freeIndex, newEntry);
+        } else {
+            // Si el bloque está lleno, habría que asignar nuevo bloque, pero por ahora
+            // asumimos espacio o error
+            // Mejor implementación: expandir directorio si es necesario.
+            // Para simplificar, si no cabe, error (aunque create file expande, aquí
+            // deberíamos reusar lógica)
+            // Reusando espacio libre o añadiendo al final si hay espacio en bloque
+            if (destEntries.size() < (fs.getSuperblock().getBlockSize() / FSConstants.DIR_ENTRY_SIZE)) {
+                destEntries.add(newEntry);
+            } else {
+                throw new IOException("Directorio destino lleno (no implementada expansión en mv)");
+            }
+        }
+
+        fs.writeDirectoryEntries(destParentInode, destEntries);
+
+        // Si es directorio, actualizar ".." ?? No, ".." apunta al padre por número de
+        // inode.
+        // Si movemos un directorio, su ".." debería apuntar al nuevo padre.
+        Inode sourceInode = fs.readInode(sourceInodeNum);
+        if (sourceInode.isDirectory()) {
+            List<DirectoryEntry> sourceEntries = fs.readDirectoryEntries(sourceInode);
+            for (int i = 0; i < sourceEntries.size(); i++) {
+                if (!sourceEntries.get(i).isFree() && sourceEntries.get(i).getName().equals("..")) {
+                    sourceEntries.set(i,
+                            new DirectoryEntry(destParentInode.getInodeNumber(), FSConstants.TYPE_DIRECTORY, ".."));
+                    fs.writeDirectoryEntries(sourceInode, sourceEntries);
+
+                    // Actualizar link counts
+                    sourceParentInode.setLinkCount(sourceParentInode.getLinkCount() - 1);
+                    destParentInode.setLinkCount(destParentInode.getLinkCount() + 1);
+
+                    fs.writeInode(sourceParentInode);
+                    fs.writeInode(destParentInode);
+                    break;
+                }
+            }
+        }
+
+        System.out.println("Movido '" + sourcePath + "' a '" + destPath + "/" + newName + "'");
     }
 
     /**
