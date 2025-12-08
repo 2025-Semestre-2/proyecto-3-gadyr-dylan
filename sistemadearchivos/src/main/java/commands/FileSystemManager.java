@@ -28,6 +28,9 @@ public class FileSystemManager {
     /**
      * Formatea el sistema de archivos
      */
+    /**
+     * Formatea el sistema de archivos
+     */
     public void format(int sizeMB) throws IOException {
         Scanner scanner = new Scanner(System.in);
 
@@ -35,6 +38,21 @@ public class FileSystemManager {
 
         int strategy = FSConstants.ALLOC_INDEXED;
         System.out.println("El sistema de archivos usa la estrategia de asignación indexada.");
+
+        // Solicitar tamaño del bloque
+        System.out.print("Ingrese el tamaño del bloque en KB (ej. 4, 8, 16): ");
+        int blockSizeKB = 4;
+        try {
+            String input = scanner.nextLine();
+            blockSizeKB = Integer.parseInt(input);
+            if (blockSizeKB <= 0) {
+                System.out.println("Tamaño inválido, usando por defecto 4KB");
+                blockSizeKB = 4;
+            }
+        } catch (NumberFormatException e) {
+            System.out.println("Entrada inválida, usando por defecto 4KB");
+            blockSizeKB = 4;
+        }
 
         // Solicitar contraseña del usuario root
         System.out.print("\nEstablezca la contraseña para el usuario root: ");
@@ -53,11 +71,11 @@ public class FileSystemManager {
 
         // Crear y formatear el sistema de archivos
         fs = new FileSystem(fsFilePath);
-        fs.format(sizeMB, strategy, password);
+        fs.format(sizeMB, blockSizeKB, strategy, password);
 
         // Establecer usuario actual como root
         currentUser = fs.getUserByName().get("root");
-        currentDirectory = "/root";
+        currentDirectory = "/user/root/home";
 
         System.out.println("\n¡Sistema de archivos formateado correctamente!");
         System.out.println("Usuario actual: root");
@@ -126,17 +144,17 @@ public class FileSystemManager {
         int newUserId = fs.getUserTable().size();
 
         // Crear directorio home
-        String homeDir = "/home/" + username;
+        String homeDir = "/user/" + username + "/home";
 
         // Crear usuario
         User newUser = new User(newUserId, username, password, fullName, homeDir, 1);
         fs.getUserTable().put(newUserId, newUser);
         fs.getUserByName().put(username, newUser);
 
-        // Crear directorio /home si no existe
-        createHomeStructure();
+        // Crear directorio /user si no existe
+        createUserStructure();
 
-        // Crear directorio home del usuario
+        // Crear directorio del usuario
         createUserHomeDirectory(username, newUserId);
 
         // Guardar cambios
@@ -148,57 +166,59 @@ public class FileSystemManager {
     }
 
     /**
-     * Crea la estructura /home si no existe
+     * Crea la estructura /user si no existe
      */
-    private void createHomeStructure() throws IOException {
-        // Buscar si existe el directorio /home en la raíz
+    private void createUserStructure() throws IOException {
+        // Buscar si existe el directorio /user en la raíz
         Inode rootInode = fs.readInode(0);
         List<DirectoryEntry> rootEntries = fs.readDirectoryEntries(rootInode);
 
-        boolean homeExists = false;
+        boolean userExists = false;
         for (DirectoryEntry entry : rootEntries) {
-            if (!entry.isFree() && entry.getName().equals("home")) {
-                homeExists = true;
+            if (!entry.isFree() && entry.getName().equals("user")) {
+                userExists = true;
                 break;
             }
         }
 
-        if (!homeExists) {
-            // Crear el directorio /home
-            int homeInodeNum = fs.allocateInode();
+        if (!userExists) {
+            // Crear el directorio /user
+            int userInodeNum = fs.allocateInode();
+            int blockSize = fs.getSuperblock().getBlockSize();
 
-            Inode homeInode = new Inode(
-                    homeInodeNum,
+            Inode userInode = new Inode(
+                    userInodeNum,
                     FSConstants.TYPE_DIRECTORY,
                     FSConstants.DEFAULT_DIR_PERMS,
                     FSConstants.ROOT_UID,
                     FSConstants.ROOT_GID);
-            homeInode.setName("home");
-            homeInode.setFileSize(FSConstants.BLOCK_SIZE);
-            homeInode.setLinkCount(2);
+            userInode.setName("user");
+            userInode.setFileSize(blockSize);
+            userInode.setLinkCount(2);
 
             // Asignar bloque de datos
             int dataBlock = fs.allocateDataBlock();
-            homeInode.setDirectBlock(0, dataBlock);
-            fs.writeInode(homeInode);
+            userInode.setDirectBlock(0, dataBlock);
+            fs.writeInode(userInode);
 
-            // Crear entradas del directorio /home
-            List<DirectoryEntry> homeEntries = new ArrayList<>();
-            homeEntries.add(new DirectoryEntry(homeInodeNum, FSConstants.TYPE_DIRECTORY, "."));
-            homeEntries.add(new DirectoryEntry(0, FSConstants.TYPE_DIRECTORY, ".."));
+            // Crear entradas del directorio /user
+            List<DirectoryEntry> userEntries = new ArrayList<>();
+            userEntries.add(new DirectoryEntry(userInodeNum, FSConstants.TYPE_DIRECTORY, "."));
+            userEntries.add(new DirectoryEntry(0, FSConstants.TYPE_DIRECTORY, ".."));
 
-            for (int i = 2; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
-                homeEntries.add(new DirectoryEntry());
+            int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
+            for (int i = 2; i < entriesPerBlock; i++) {
+                userEntries.add(new DirectoryEntry());
             }
 
-            fs.writeDirectoryEntries(homeInode, homeEntries);
+            fs.writeDirectoryEntries(userInode, userEntries);
 
             // Agregar entrada en el directorio raíz
             boolean added = false;
             for (int i = 0; i < rootEntries.size(); i++) {
                 if (rootEntries.get(i).isFree()) {
-                    rootEntries.set(i, new DirectoryEntry(homeInodeNum,
-                            FSConstants.TYPE_DIRECTORY, "home"));
+                    rootEntries.set(i, new DirectoryEntry(userInodeNum,
+                            FSConstants.TYPE_DIRECTORY, "user"));
                     added = true;
                     break;
                 }
@@ -212,70 +232,111 @@ public class FileSystemManager {
             rootInode.setLinkCount(rootInode.getLinkCount() + 1);
             fs.writeInode(rootInode);
 
-            System.out.println("Directorio /home creado");
+            System.out.println("Directorio /user creado");
         }
     }
 
     /**
-     * Crea el directorio home de un usuario
+     * Crea el directorio del usuario: /user/{username}/home
      */
     private void createUserHomeDirectory(String username, int userId) throws IOException {
-        // Leer el directorio /home
+        // Leer el directorio /user
         Inode rootInode = fs.readInode(0);
         List<DirectoryEntry> rootEntries = fs.readDirectoryEntries(rootInode);
 
-        int homeInodeNum = -1;
+        int userDirInodeNum = -1;
         for (DirectoryEntry entry : rootEntries) {
-            if (!entry.isFree() && entry.getName().equals("home")) {
-                homeInodeNum = entry.getInodeNumber();
+            if (!entry.isFree() && entry.getName().equals("user")) {
+                userDirInodeNum = entry.getInodeNumber();
                 break;
             }
         }
 
-        if (homeInodeNum == -1) {
-            throw new IOException("Directorio /home no encontrado");
+        if (userDirInodeNum == -1) {
+            throw new IOException("Directorio /user no encontrado");
         }
 
-        Inode homeInode = fs.readInode(homeInodeNum);
-        List<DirectoryEntry> homeEntries = fs.readDirectoryEntries(homeInode);
+        Inode userDirInode = fs.readInode(userDirInodeNum);
+        List<DirectoryEntry> userDirEntries = fs.readDirectoryEntries(userDirInode);
 
-        // Crear el directorio del usuario
-        int userHomeInodeNum = fs.allocateInode();
+        // Paso 1: Crear el directorio /user/{username}
+        int userNameDirInodeNum = fs.allocateInode();
+        int blockSize = fs.getSuperblock().getBlockSize();
 
-        Inode userHomeInode = new Inode(
-                userHomeInodeNum,
+        Inode userNameDirInode = new Inode(
+                userNameDirInodeNum,
                 FSConstants.TYPE_DIRECTORY,
                 FSConstants.DEFAULT_DIR_PERMS,
                 userId,
                 1 // grupo users por defecto
         );
-        userHomeInode.setName(username);
-        userHomeInode.setFileSize(FSConstants.BLOCK_SIZE);
-        userHomeInode.setLinkCount(2);
+        userNameDirInode.setName(username);
+        userNameDirInode.setFileSize(blockSize);
+        userNameDirInode.setLinkCount(3); // ".", ".." y "home"
 
-        // Asignar bloque de datos
-        int dataBlock = fs.allocateDataBlock();
-        userHomeInode.setDirectBlock(0, dataBlock);
-        fs.writeInode(userHomeInode);
+        // Asignar bloque de datos para /user/{username}
+        int userNameDataBlock = fs.allocateDataBlock();
+        userNameDirInode.setDirectBlock(0, userNameDataBlock);
+        fs.writeInode(userNameDirInode);
 
-        // Crear entradas del directorio del usuario
-        List<DirectoryEntry> userHomeEntries = new ArrayList<>();
-        userHomeEntries.add(new DirectoryEntry(userHomeInodeNum,
+        // Crear entradas del directorio /user/{username}
+        List<DirectoryEntry> userNameDirEntries = new ArrayList<>();
+        userNameDirEntries.add(new DirectoryEntry(userNameDirInodeNum,
                 FSConstants.TYPE_DIRECTORY, "."));
-        userHomeEntries.add(new DirectoryEntry(homeInodeNum,
+        userNameDirEntries.add(new DirectoryEntry(userDirInodeNum,
                 FSConstants.TYPE_DIRECTORY, ".."));
 
-        for (int i = 2; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
-            userHomeEntries.add(new DirectoryEntry());
+        int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
+
+        // Reservar espacio para "home" que crearemos después
+        userNameDirEntries.add(new DirectoryEntry()); // Placeholder para "home"
+
+        for (int i = 3; i < entriesPerBlock; i++) {
+            userNameDirEntries.add(new DirectoryEntry());
         }
 
-        fs.writeDirectoryEntries(userHomeInode, userHomeEntries);
+        // Paso 2: Crear el directorio /user/{username}/home
+        int homeInodeNum = fs.allocateInode();
 
-        // Agregar entrada en /home
+        Inode homeInode = new Inode(
+                homeInodeNum,
+                FSConstants.TYPE_DIRECTORY,
+                FSConstants.DEFAULT_DIR_PERMS,
+                userId,
+                1 // grupo users por defecto
+        );
+        homeInode.setName("home");
+        homeInode.setFileSize(blockSize);
+        homeInode.setLinkCount(2); // "." y ".."
+
+        // Asignar bloque de datos para /user/{username}/home
+        int homeDataBlock = fs.allocateDataBlock();
+        homeInode.setDirectBlock(0, homeDataBlock);
+        fs.writeInode(homeInode);
+
+        // Crear entradas del directorio /user/{username}/home
+        List<DirectoryEntry> homeEntries = new ArrayList<>();
+        homeEntries.add(new DirectoryEntry(homeInodeNum,
+                FSConstants.TYPE_DIRECTORY, "."));
+        homeEntries.add(new DirectoryEntry(userNameDirInodeNum,
+                FSConstants.TYPE_DIRECTORY, ".."));
+
+        for (int i = 2; i < entriesPerBlock; i++) {
+            homeEntries.add(new DirectoryEntry());
+        }
+
+        fs.writeDirectoryEntries(homeInode, homeEntries);
+
+        // Paso 3: Agregar entrada "home" en /user/{username}
+        userNameDirEntries.set(2, new DirectoryEntry(homeInodeNum,
+                FSConstants.TYPE_DIRECTORY, "home"));
+        fs.writeDirectoryEntries(userNameDirInode, userNameDirEntries);
+
+        // Paso 4: Agregar entrada del usuario en /user
         boolean added = false;
-        for (int i = 0; i < homeEntries.size(); i++) {
-            if (homeEntries.get(i).isFree()) {
-                homeEntries.set(i, new DirectoryEntry(userHomeInodeNum,
+        for (int i = 0; i < userDirEntries.size(); i++) {
+            if (userDirEntries.get(i).isFree()) {
+                userDirEntries.set(i, new DirectoryEntry(userNameDirInodeNum,
                         FSConstants.TYPE_DIRECTORY, username));
                 added = true;
                 break;
@@ -283,12 +344,12 @@ public class FileSystemManager {
         }
 
         if (!added) {
-            throw new IOException("No hay espacio en el directorio /home");
+            throw new IOException("No hay espacio en el directorio /user");
         }
 
-        fs.writeDirectoryEntries(homeInode, homeEntries);
-        homeInode.setLinkCount(homeInode.getLinkCount() + 1);
-        fs.writeInode(homeInode);
+        fs.writeDirectoryEntries(userDirInode, userDirEntries);
+        userDirInode.setLinkCount(userDirInode.getLinkCount() + 1);
+        fs.writeInode(userDirInode);
     }
 
     /**
@@ -440,6 +501,7 @@ public class FileSystemManager {
 
                 // Asignar nuevo inode
                 int newInodeNum = fs.allocateInode();
+                int blockSize = fs.getSuperblock().getBlockSize();
 
                 // Crear inode del nuevo directorio
                 Inode newDirInode = new Inode(
@@ -449,7 +511,7 @@ public class FileSystemManager {
                         currentUser.getUserId(),
                         currentUser.getGroupId());
                 newDirInode.setName(dirName);
-                newDirInode.setFileSize(FSConstants.BLOCK_SIZE);
+                newDirInode.setFileSize(blockSize);
                 newDirInode.setLinkCount(2); // "." y ".."
 
                 // Asignar bloque de datos para el directorio
@@ -469,7 +531,8 @@ public class FileSystemManager {
                         FSConstants.TYPE_DIRECTORY, ".."));
 
                 // Rellenar con entradas vacías
-                for (int i = 2; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
+                int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
+                for (int i = 2; i < entriesPerBlock; i++) {
                     newDirEntries.add(new DirectoryEntry());
                 }
 

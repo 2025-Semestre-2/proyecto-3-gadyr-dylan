@@ -29,7 +29,7 @@ public class Superblock {
         this.magicNumber = FSConstants.MAGIC_NUMBER;
         this.fsName = "myFS";
         this.fsVersion = 1;
-        this.blockSize = FSConstants.BLOCK_SIZE;
+        this.blockSize = FSConstants.DEFAULT_BLOCK_SIZE;
         this.rootInode = FSConstants.ROOT_INODE;
         this.creationTime = System.currentTimeMillis();
     }
@@ -165,17 +165,20 @@ public class Superblock {
 
     /**
      * Serializa el Superblock a un array de bytes
-     * @return 
+     * 
+     * @return
      */
     public byte[] toBytes() {
-        ByteBuffer buffer = ByteBuffer.allocate(FSConstants.BLOCK_SIZE);
+        // El superblock siempre debe caber en el primer bloque, usamos blockSize para
+        // el buffer
+        ByteBuffer buffer = ByteBuffer.allocate(Math.max(this.blockSize, 1024));
         buffer.putInt(magicNumber);
-        
+
         byte[] nameBytes = new byte[32];
         byte[] actualName = fsName.getBytes();
         System.arraycopy(actualName, 0, nameBytes, 0, Math.min(actualName.length, 32));
         buffer.put(nameBytes);
-        
+
         buffer.putInt(fsVersion);
         buffer.putInt(blockSize);
         buffer.putInt(totalBlocks);
@@ -189,27 +192,28 @@ public class Superblock {
         buffer.putInt(inodeTableStart);
         buffer.putInt(dataBlocksStart);
         buffer.putLong(creationTime);
-        buffer.putLong(lastMountTime);       
-        
+        buffer.putLong(lastMountTime);
+
         return buffer.array();
     }
-    
+
     /**
-     * Deserializa un Superblock desde un array de bytes    
+     * Deserializa un Superblock desde un array de bytes
+     * 
      * @param data
-     * @return 
+     * @return
      */
     public static Superblock fromBytes(byte[] data) {
         ByteBuffer buffer = ByteBuffer.wrap(data);
-        
+
         Superblock sb = new Superblock();
-        
+
         sb.magicNumber = buffer.getInt();
-        
+
         byte[] nameBytes = new byte[32];
         buffer.get(nameBytes);
         sb.fsName = new String(nameBytes).trim().replace("\0", "");
-        
+
         sb.fsVersion = buffer.getInt();
         sb.blockSize = buffer.getInt();
         sb.totalBlocks = buffer.getInt();
@@ -224,13 +228,14 @@ public class Superblock {
         sb.dataBlocksStart = buffer.getInt();
         sb.creationTime = buffer.getLong();
         sb.lastMountTime = buffer.getLong();
-        
+
         return sb;
     }
-    
+
     /**
      * Valida si el superblock es válido
-     * @return 
+     * 
+     * @return
      */
     public boolean isValid() {
         return magicNumber == FSConstants.MAGIC_NUMBER;

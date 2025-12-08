@@ -186,7 +186,8 @@ public class Inode {
 
     /**
      * Verifica si el inode está libre
-     * @return 
+     * 
+     * @return
      */
     public boolean isFree() {
         return fileType == FSConstants.TYPE_FREE;
@@ -194,7 +195,8 @@ public class Inode {
 
     /**
      * Verifica si es un directorio
-     * @return 
+     * 
+     * @return
      */
     public boolean isDirectory() {
         return fileType == FSConstants.TYPE_DIRECTORY;
@@ -202,7 +204,8 @@ public class Inode {
 
     /**
      * Verifica si es un archivo regular
-     * @return 
+     * 
+     * @return
      */
     public boolean isFile() {
         return fileType == FSConstants.TYPE_FILE;
@@ -210,19 +213,21 @@ public class Inode {
 
     /**
      * Verifica si es un link
-     * @return 
+     * 
+     * @return
      */
     public boolean isLink() {
         return fileType == FSConstants.TYPE_LINK;
     }
-    
+
     /**
      * Serializa el Inode a bytes
-     * @return 
+     * 
+     * @return
      */
     public byte[] toBytes() {
         ByteBuffer buffer = ByteBuffer.allocate(FSConstants.INODE_SIZE);
-        
+
         buffer.putInt(inodeNumber);
         buffer.putInt(fileType);
         buffer.putInt(permissions);
@@ -234,35 +239,36 @@ public class Inode {
         buffer.putLong(modificationTime);
         buffer.putLong(accessTime);
         buffer.putInt(isOpen);
-        
+
         // Name 64 bytes
         byte[] nameBytes = new byte[64];
         if (name != null && !name.isEmpty()) {
             byte[] actualName = name.getBytes();
-            System.arraycopy(actualName, 0, nameBytes, 0, Math.min(actualName.length, 64));            
+            System.arraycopy(actualName, 0, nameBytes, 0, Math.min(actualName.length, 64));
         }
         buffer.put(nameBytes);
-        
+
         // Direct blocks
         for (int i = 0; i < FSConstants.DIRECT_POINTERS; i++) {
             buffer.putInt(directBlocks[i]);
         }
-        
+
         buffer.putInt(singleIndirect);
         buffer.putInt(doubleIndirect);
         buffer.putInt(tripleIndirect);
-        
+
         return buffer.array();
     }
-    
+
     /**
      * Deserializa un Inode desde bytes
+     * 
      * @param data
-     * @return 
+     * @return
      */
     public static Inode fromBytes(byte[] data) {
         ByteBuffer buffer = ByteBuffer.wrap(data);
-        
+
         Inode inode = new Inode();
         inode.inodeNumber = buffer.getInt();
         inode.fileType = buffer.getInt();
@@ -275,21 +281,21 @@ public class Inode {
         inode.modificationTime = buffer.getLong();
         inode.accessTime = buffer.getLong();
         inode.isOpen = buffer.getInt();
-        
+
         // name
         byte[] nameBytes = new byte[64];
         buffer.get(nameBytes);
         inode.name = new String(nameBytes).trim().replace("\0", "");
-        
+
         // Direct blocks
         for (int i = 0; i < FSConstants.DIRECT_POINTERS; i++) {
             inode.directBlocks[i] = buffer.getInt();
         }
-        
+
         inode.singleIndirect = buffer.getInt();
         inode.doubleIndirect = buffer.getInt();
         inode.tripleIndirect = buffer.getInt();
-        
+
         return inode;
-    }    
+    }
 }

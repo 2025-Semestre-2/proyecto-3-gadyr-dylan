@@ -44,14 +44,15 @@ public class FileSystem {
      * Calcula el offset de un bloque en el archivo
      */
     private long getBlockOffset(int blockNumber) {
-        return (long) blockNumber * FSConstants.BLOCK_SIZE;
+        return (long) blockNumber * superblock.getBlockSize();
     }
 
     /**
      * Lee un bloque completo del disco
      */
     private byte[] readBlock(int blockNumber) throws IOException {
-        byte[] block = new byte[FSConstants.BLOCK_SIZE];
+        int blockSize = superblock.getBlockSize();
+        byte[] block = new byte[blockSize];
         fsFile.seek(getBlockOffset(blockNumber));
         fsFile.readFully(block);
 
@@ -62,8 +63,9 @@ public class FileSystem {
      * Escribe un bloque completo al disco
      */
     private void writeBlock(int blockNumber, byte[] data) throws IOException {
-        if (data.length != FSConstants.BLOCK_SIZE) {
-            throw new IllegalArgumentException("El bloque debe tener " + FSConstants.BLOCK_SIZE + " bytes");
+        int blockSize = superblock.getBlockSize();
+        if (data.length != blockSize) {
+            throw new IllegalArgumentException("El bloque debe tener " + blockSize + " bytes");
         }
         fsFile.seek(getBlockOffset(blockNumber));
         fsFile.write(data);
@@ -179,15 +181,16 @@ public class FileSystem {
      * Escribe el inode bitmap al disco
      */
     private void writeInodeBitmap() throws IOException {
+        int blockSize = superblock.getBlockSize();
         byte[] bitmapBytes = inodeBitmap.toBytes();
-        int blocksNeeded = (bitmapBytes.length + FSConstants.BLOCK_SIZE - 1)
-                / FSConstants.BLOCK_SIZE;
+        int blocksNeeded = (bitmapBytes.length + blockSize - 1)
+                / blockSize;
 
         for (int i = 0; i < blocksNeeded; i++) {
-            byte[] blockData = new byte[FSConstants.BLOCK_SIZE];
-            int copyLength = Math.min(FSConstants.BLOCK_SIZE,
-                    bitmapBytes.length - i * FSConstants.BLOCK_SIZE);
-            System.arraycopy(bitmapBytes, i * FSConstants.BLOCK_SIZE,
+            byte[] blockData = new byte[blockSize];
+            int copyLength = Math.min(blockSize,
+                    bitmapBytes.length - i * blockSize);
+            System.arraycopy(bitmapBytes, i * blockSize,
                     blockData, 0, copyLength);
             writeBlock(superblock.getInodeBitmapStart() + i, blockData);
         }
@@ -197,15 +200,16 @@ public class FileSystem {
      * Escribe el data block bitmap al disco
      */
     private void writeDataBlockBitmap() throws IOException {
+        int blockSize = superblock.getBlockSize();
         byte[] bitmapBytes = dataBlockBitmap.toBytes();
-        int blocksNeeded = (bitmapBytes.length + FSConstants.BLOCK_SIZE - 1)
-                / FSConstants.BLOCK_SIZE;
+        int blocksNeeded = (bitmapBytes.length + blockSize - 1)
+                / blockSize;
 
         for (int i = 0; i < blocksNeeded; i++) {
-            byte[] blockData = new byte[FSConstants.BLOCK_SIZE];
-            int copyLength = Math.min(FSConstants.BLOCK_SIZE,
-                    bitmapBytes.length - i * FSConstants.BLOCK_SIZE);
-            System.arraycopy(bitmapBytes, i * FSConstants.BLOCK_SIZE,
+            byte[] blockData = new byte[blockSize];
+            int copyLength = Math.min(blockSize,
+                    bitmapBytes.length - i * blockSize);
+            System.arraycopy(bitmapBytes, i * blockSize,
                     blockData, 0, copyLength);
             writeBlock(superblock.getDataBitmapStart() + i, blockData);
         }
@@ -228,10 +232,16 @@ public class FileSystem {
         }
 
         byte[] blockData = readBlock(blockNumber);
+        int blockSize = superblock.getBlockSize();
+        int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
 
-        for (int i = 0; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
+        for (int i = 0; i < entriesPerBlock; i++) {
             int offset = i * FSConstants.DIR_ENTRY_SIZE;
             byte[] entryData = new byte[FSConstants.DIR_ENTRY_SIZE];
+            // Verificar si hay suficientes bytes restantes en el bloque
+            if (offset + FSConstants.DIR_ENTRY_SIZE > blockSize) {
+                break;
+            }
             System.arraycopy(blockData, offset, entryData, 0, FSConstants.DIR_ENTRY_SIZE);
 
             DirectoryEntry entry = DirectoryEntry.fromBytes(entryData);
@@ -250,8 +260,11 @@ public class FileSystem {
             throw new IllegalArgumentException("El inode no es un directorio");
         }
 
-        if (entries.size() > FSConstants.ENTRIES_PER_BLOCK) {
-            throw new IOException("Demasiadas entradas para un solo bloque");
+        int blockSize = superblock.getBlockSize();
+        int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
+
+        if (entries.size() > entriesPerBlock) {
+            throw new IOException("Demasiadas entradas para un solo bloque (máximo " + entriesPerBlock + ")");
         }
 
         int blockNumber = dirInode.getDirectBlocks()[0];
@@ -259,13 +272,13 @@ public class FileSystem {
             // Necesitamos asignar un bloque
             blockNumber = allocateDataBlock();
             dirInode.setDirectBlock(0, blockNumber);
-            dirInode.setFileSize(FSConstants.BLOCK_SIZE);
+            dirInode.setFileSize(blockSize);
             writeInode(dirInode);
         }
 
-        byte[] blockData = new byte[FSConstants.BLOCK_SIZE];
+        byte[] blockData = new byte[blockSize];
 
-        for (int i = 0; i < entries.size() && i < FSConstants.ENTRIES_PER_BLOCK; i++) {
+        for (int i = 0; i < entries.size() && i < entriesPerBlock; i++) {
             byte[] entryData = entries.get(i).toBytes();
             System.arraycopy(entryData, 0, blockData,
                     i * FSConstants.DIR_ENTRY_SIZE, FSConstants.DIR_ENTRY_SIZE);
@@ -307,30 +320,35 @@ public class FileSystem {
      * Formatea y crea el sistema de archivos
      *
      * @param sizeMB             Tamaño del disco
+     * @param blockSizeKB        Tamaño del bloque en KB
      * @param allocationStrategy Estrategia de asignación (1=Contigua,
      *                           2=Enlazada, 3=Indexada)
      * @param rootPassword       Contraseña del usuario root
      */
-    public void format(int sizeMB, int allocationStrategy, String rootPassword) throws IOException {
+    public void format(int sizeMB, int blockSizeKB, int allocationStrategy, String rootPassword) throws IOException {
         System.out.println("iniciando formateo del sistema de archivos...");
         System.out.println("Tamaño: " + sizeMB + " MB");
+        System.out.println("Tamaño de bloque: " + blockSizeKB + " KB");
         System.out.println("Estrategia: " + getStrategyName(allocationStrategy));
+
+        int blockSize = blockSizeKB * 1024;
 
         // Paso 1: Calcular estructuras
         long totalBytes = (long) sizeMB * 1024 * 1024;
-        int totalBlocks = (int) (totalBytes / FSConstants.BLOCK_SIZE);
+        int totalBlocks = (int) (totalBytes / blockSize);
 
-        // Calcular total de inodes (1 inode por cada 16 KB)
+        // Calcular total de inodes (1 inode por cada 16 KB, o ajustar según necesidad)
+        // Mantener política de inodes: 1 inode cada 16KB de espacio es un buen promedio
         int totalInodes = (int) (totalBytes / (16 * 1024));
 
         // Calcular bloques necesarios para el inode bitmap
         int inodeBitmapBits = totalInodes;
         int inodeBitmapBytes = (inodeBitmapBits + 7) / 8;
-        int inodeBitmapBlocks = (inodeBitmapBytes + FSConstants.BLOCK_SIZE - 1) / FSConstants.BLOCK_SIZE;
+        int inodeBitmapBlocks = (inodeBitmapBytes + blockSize - 1) / blockSize;
 
         // Calcular bloques para la tabla de inodes
         int inodeTableBytes = totalInodes * FSConstants.INODE_SIZE;
-        int inodeTableBlocks = (inodeTableBytes + FSConstants.BLOCK_SIZE - 1) / FSConstants.BLOCK_SIZE;
+        int inodeTableBlocks = (inodeTableBytes + blockSize - 1) / blockSize;
 
         // Calcular bloques de datos provisionales
         int metadataBlocksWithoutDataBitmap = 1 + inodeBitmapBlocks + inodeTableBlocks;
@@ -339,7 +357,7 @@ public class FileSystem {
         // Calcular bloques para data bitmap
         int dataBitmapBits = provisionalDataBlocks;
         int dataBitmapBytes = (dataBitmapBits + 7) / 8;
-        int dataBitmapBlocks = (dataBitmapBytes + FSConstants.BLOCK_SIZE - 1) / FSConstants.BLOCK_SIZE;
+        int dataBitmapBlocks = (dataBitmapBytes + blockSize - 1) / blockSize;
 
         // Calcular bloques de datos reales
         int actualDataBlocks = totalBlocks - 1 - inodeBitmapBlocks - dataBitmapBlocks - inodeTableBlocks;
@@ -365,11 +383,11 @@ public class FileSystem {
         System.out.println("\nCreando Superblock...");
         superblock = new Superblock();
         superblock.setFsName("myFS");
-        superblock.setBlockSize(FSConstants.BLOCK_SIZE);
+        superblock.setBlockSize(blockSize);
         superblock.setTotalBlocks(totalBlocks);
         superblock.setTotalInodes(totalInodes);
-        superblock.setFreeBlocks(actualDataBlocks - 2); // -2 por "/" y "/root"
-        superblock.setFreeInodes(totalInodes - 2); // -2 por "/" y "/root"
+        superblock.setFreeBlocks(actualDataBlocks - 4); // -4 por "/", "/user", "/user/root", "/user/root/home"
+        superblock.setFreeInodes(totalInodes - 4); // -4 por "/", "/user", "/user/root", "/user/root/home"
         superblock.setRootInode(FSConstants.ROOT_INODE);
         superblock.setAllocationStrategy(allocationStrategy);
 
@@ -379,24 +397,30 @@ public class FileSystem {
         superblock.setInodeTableStart(1 + inodeBitmapBlocks + dataBitmapBlocks);
         superblock.setDataBlocksStart(1 + inodeBitmapBlocks + dataBitmapBlocks + inodeTableBlocks);
 
+        // OJO: writeSuperblock usa 'superblock.blockSize' para el buffer.
+        // Como 'superblock' ya está inicializado con el nuevo blockSize, esto funciona.
         writeSuperblock();
         System.out.println(" Superblock escrito en el bloque 0");
 
         // Paso 4: Inicializar Inode Bitmap
         System.out.println("\nInicializando Inode Bitmap...");
         inodeBitmap = new Bitmap(totalInodes);
-        // inodes 0 y 1 ocupados (root y /root)
+        // inodes 0, 1, 2, 3 ocupados (/, /user, /user/root, /user/root/home)
         inodeBitmap.allocate(0);
         inodeBitmap.allocate(1);
+        inodeBitmap.allocate(2);
+        inodeBitmap.allocate(3);
         writeInodeBitmap();
         System.out.println(" Inode Bitmap escrito");
 
         // Paso 5: inicializar Data Block Bitmap
         System.out.println("\nInicializando Data Block Bitmap...");
         dataBlockBitmap = new Bitmap(actualDataBlocks);
-        // 0 y 1 ocupados ("/" y "/root")
+        // 0, 1, 2, 3 ocupados (/, /user, /user/root, /user/root/home)
         dataBlockBitmap.allocate(0);
         dataBlockBitmap.allocate(1);
+        dataBlockBitmap.allocate(2);
+        dataBlockBitmap.allocate(3);
         writeDataBlockBitmap();
         System.out.println(" Data Block Bitmap escrito");
 
@@ -410,8 +434,8 @@ public class FileSystem {
                 FSConstants.ROOT_GID);
 
         rootInode.setName("/");
-        rootInode.setFileSize(FSConstants.BLOCK_SIZE);
-        rootInode.setLinkCount(3); // ".", ".." y "root"
+        rootInode.setFileSize(blockSize);
+        rootInode.setLinkCount(3); // ".", ".." y "user"
         rootInode.setDirectBlock(0, superblock.getDataBlocksStart());
         writeInode(rootInode);
         System.out.println(" Inode de '/' creado (inode 0)");
@@ -426,64 +450,137 @@ public class FileSystem {
         // Entrada ".." (apunta a sí mismo porque es la raíz)
         rootEntries.add(new DirectoryEntry(0, FSConstants.TYPE_DIRECTORY, ".."));
 
-        // Entrada "root" (apunta al directorio home del usuario root)
-        rootEntries.add(new DirectoryEntry(1, FSConstants.TYPE_DIRECTORY, "root"));
+        // Entrada "user" (apunta al directorio /user)
+        rootEntries.add(new DirectoryEntry(1, FSConstants.TYPE_DIRECTORY, "user"));
 
         // Rellenar con entradas vacías
-        for (int i = 3; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
+        int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
+        for (int i = 3; i < entriesPerBlock; i++) {
             rootEntries.add(new DirectoryEntry());
         }
 
         writeDirectoryEntries(rootInode, rootEntries);
         System.out.println("  Entradas de directorio escritas");
 
-        // Paso 8: Crear inode del directorio "/root"
-        System.out.println("\nCreando directorio '/root'...");
-        Inode rootHomeInode = new Inode(
+        // Paso 8: Crear inode del directorio "/user"
+        System.out.println("\nCreando directorio '/user'...");
+        Inode userDirInode = new Inode(
                 1,
                 FSConstants.TYPE_DIRECTORY,
                 FSConstants.DEFAULT_DIR_PERMS,
                 FSConstants.ROOT_UID,
                 FSConstants.ROOT_GID);
-        rootHomeInode.setName("root");
-        rootHomeInode.setFileSize(FSConstants.BLOCK_SIZE);
-        rootHomeInode.setLinkCount(2); // "." y ".."
-        rootHomeInode.setDirectBlock(0, superblock.getDataBlocksStart() + 1);
-        writeInode(rootHomeInode);
-        System.out.println("  Inode de '/root' creado (inode 1)");
+        userDirInode.setName("user");
+        userDirInode.setFileSize(blockSize);
+        userDirInode.setLinkCount(3); // ".", ".." y "root"
+        userDirInode.setDirectBlock(0, superblock.getDataBlocksStart() + 1);
+        writeInode(userDirInode);
+        System.out.println("  Inode de '/user' creado (inode 1)");
 
-        // Paso 9: Crear contenido del directorio "/root"
-        System.out.println("  Creando entradas de directorio para '/root'...");
+        // Paso 9: Crear contenido del directorio "/user"
+        System.out.println("  Creando entradas de directorio para '/user'...");
+        List<DirectoryEntry> userDirEntries = new ArrayList<>();
+
+        // Entrada "." (apunta a sí mismo)
+        userDirEntries.add(new DirectoryEntry(1, FSConstants.TYPE_DIRECTORY, "."));
+
+        // Entrada ".." (apunta al directorio padre "/")
+        userDirEntries.add(new DirectoryEntry(0, FSConstants.TYPE_DIRECTORY, ".."));
+
+        // Entrada "root" (apunta al directorio /user/root)
+        userDirEntries.add(new DirectoryEntry(2, FSConstants.TYPE_DIRECTORY, "root"));
+
+        // Rellenar con entradas vacías
+        for (int i = 3; i < entriesPerBlock; i++) {
+            userDirEntries.add(new DirectoryEntry());
+        }
+
+        writeDirectoryEntries(userDirInode, userDirEntries);
+        System.out.println("  Entradas de directorio escritas");
+
+        // Paso 10: Crear inode del directorio "/user/root"
+        System.out.println("\nCreando directorio '/user/root'...");
+        Inode userRootDirInode = new Inode(
+                2,
+                FSConstants.TYPE_DIRECTORY,
+                FSConstants.DEFAULT_DIR_PERMS,
+                FSConstants.ROOT_UID,
+                FSConstants.ROOT_GID);
+        userRootDirInode.setName("root");
+        userRootDirInode.setFileSize(blockSize);
+        userRootDirInode.setLinkCount(3); // ".", ".." y "home"
+        userRootDirInode.setDirectBlock(0, superblock.getDataBlocksStart() + 2);
+        writeInode(userRootDirInode);
+        System.out.println("  Inode de '/user/root' creado (inode 2)");
+
+        // Paso 11: Crear contenido del directorio "/user/root"
+        System.out.println("  Creando entradas de directorio para '/user/root'...");
+        List<DirectoryEntry> userRootDirEntries = new ArrayList<>();
+
+        // Entrada "." (apunta a sí mismo)
+        userRootDirEntries.add(new DirectoryEntry(2, FSConstants.TYPE_DIRECTORY, "."));
+
+        // Entrada ".." (apunta al directorio padre "/user")
+        userRootDirEntries.add(new DirectoryEntry(1, FSConstants.TYPE_DIRECTORY, ".."));
+
+        // Entrada "home" (apunta al directorio /user/root/home)
+        userRootDirEntries.add(new DirectoryEntry(3, FSConstants.TYPE_DIRECTORY, "home"));
+
+        // Rellenar con entradas vacías
+        for (int i = 3; i < entriesPerBlock; i++) {
+            userRootDirEntries.add(new DirectoryEntry());
+        }
+
+        writeDirectoryEntries(userRootDirInode, userRootDirEntries);
+        System.out.println("  Entradas de directorio escritas");
+
+        // Paso 12: Crear inode del directorio "/user/root/home"
+        System.out.println("\nCreando directorio '/user/root/home'...");
+        Inode rootHomeInode = new Inode(
+                3,
+                FSConstants.TYPE_DIRECTORY,
+                FSConstants.DEFAULT_DIR_PERMS,
+                FSConstants.ROOT_UID,
+                FSConstants.ROOT_GID);
+        rootHomeInode.setName("home");
+        rootHomeInode.setFileSize(blockSize);
+        rootHomeInode.setLinkCount(2); // "." y ".."
+        rootHomeInode.setDirectBlock(0, superblock.getDataBlocksStart() + 3);
+        writeInode(rootHomeInode);
+        System.out.println("  Inode de '/user/root/home' creado (inode 3)");
+
+        // Paso 13: Crear contenido del directorio "/user/root/home"
+        System.out.println("  Creando entradas de directorio para '/user/root/home'...");
         List<DirectoryEntry> rootHomeEntries = new ArrayList<>();
 
         // Entrada "." (apunta a sí mismo)
-        rootHomeEntries.add(new DirectoryEntry(1, FSConstants.TYPE_DIRECTORY, "."));
+        rootHomeEntries.add(new DirectoryEntry(3, FSConstants.TYPE_DIRECTORY, "."));
 
-        // Entrada ".." (apunta al directorio padre "/")
-        rootHomeEntries.add(new DirectoryEntry(0, FSConstants.TYPE_DIRECTORY, ".."));
+        // Entrada ".." (apunta al directorio padre "/user/root")
+        rootHomeEntries.add(new DirectoryEntry(2, FSConstants.TYPE_DIRECTORY, ".."));
 
         // Rellenar con entradas vacías
-        for (int i = 2; i < FSConstants.ENTRIES_PER_BLOCK; i++) {
+        for (int i = 2; i < entriesPerBlock; i++) {
             rootHomeEntries.add(new DirectoryEntry());
         }
 
         writeDirectoryEntries(rootHomeInode, rootHomeEntries);
         System.out.println("  Entradas de directorio escritas");
 
-        // Paso 10: Crear usuario root
+        // Paso 14: Crear usuario root
         System.out.println("\nCreando usuario root...");
         User rootUser = new User(
                 FSConstants.ROOT_UID,
                 "root",
                 rootPassword,
                 "Root Admin",
-                "/root",
+                "/user/root/home",
                 FSConstants.ROOT_GID);
         userTable.put(rootUser.getUserId(), rootUser);
         userByName.put(rootUser.getUsername(), rootUser);
         System.out.println("  Usuario root creado");
 
-        // Paso 11: Crear grupo root
+        // Paso 15: Crear grupo root
         System.out.println("\nCreando grupo root...");
         Group rootGroup = new Group(FSConstants.ROOT_GID, "root");
         rootGroup.addMember(FSConstants.ROOT_UID);
@@ -491,14 +588,14 @@ public class FileSystem {
         groupByName.put(rootGroup.getGroupName(), rootGroup);
         System.out.println("  Grupo root creado");
 
-        // Paso 12: Guardar usuarios y grupos en bloques especiales
+        // Paso 16: Guardar usuarios y grupos en bloques especiales
         saveUsersAndGroups();
 
-        // Paso 13: Sincronizar y cerrar
+        // Paso 17: Sincronizar y cerrar
         fsFile.getFD().sync();
         System.out.println("\n¡Sistema de archivos formateado exitosamente!");
         System.out.println("Archivo: " + fsFilePath);
-        System.out.println("Usuario root creado con directorio home: /root");
+        System.out.println("Usuario root creado con directorio home: /user/root/home");
     }
 
     /**
@@ -507,22 +604,25 @@ public class FileSystem {
      */
     private void saveUsersAndGroups() throws IOException {
         System.out.println("\nGuardando tablas de usuarios y grupos...");
+        int blockSize = superblock.getBlockSize();
 
         // Bloque especial para usuarios (después del último bloque de datos usado)
-        int userBlockNumber = superblock.getDataBlocksStart() + 2;
+        // OJO: Aquí asumimos asignación contigua simple para estos bloques especiales
+        // al momento de formatear.
+        int userBlockNumber = superblock.getDataBlocksStart() + 4;
 
         // Bloque especial para grupos
-        int groupBlockNumber = superblock.getDataBlocksStart() + 3;
+        int groupBlockNumber = superblock.getDataBlocksStart() + 5;
 
         // Marcar estos bloques como ocupados
-        dataBlockBitmap.allocate(2);
-        dataBlockBitmap.allocate(3);
+        dataBlockBitmap.allocate(4);
+        dataBlockBitmap.allocate(5);
         superblock.setFreeBlocks(superblock.getFreeBlocks() - 2);
         writeSuperblock();
         writeDataBlockBitmap();
 
         // Guardar usuarios
-        byte[] userBlock = new byte[FSConstants.BLOCK_SIZE];
+        byte[] userBlock = new byte[blockSize];
         int offset = 0;
 
         // Guardar cantidad de usuarios
@@ -533,7 +633,7 @@ public class FileSystem {
         // Guardar cada usuario (512 bytes por usuario)
         for (User user : userTable.values()) {
             byte[] userData = user.toBytes();
-            if (offset + userData.length <= FSConstants.BLOCK_SIZE) {
+            if (offset + userData.length <= blockSize) {
                 System.arraycopy(userData, 0, userBlock, offset, userData.length);
                 offset += userData.length;
             }
@@ -543,7 +643,7 @@ public class FileSystem {
         System.out.println("  Usuarios guardados en bloque " + userBlockNumber);
 
         // Guardar grupos
-        byte[] groupBlock = new byte[FSConstants.BLOCK_SIZE];
+        byte[] groupBlock = new byte[blockSize];
         offset = 0;
 
         ByteBuffer groupBuffer = ByteBuffer.wrap(groupBlock);
@@ -552,7 +652,7 @@ public class FileSystem {
 
         for (Group group : groupTable.values()) {
             byte[] groupData = group.toBytes();
-            if (offset + groupData.length <= FSConstants.BLOCK_SIZE) {
+            if (offset + groupData.length <= blockSize) {
                 System.arraycopy(groupData, 0, groupBlock, offset, groupData.length);
                 offset += groupData.length;
             }
@@ -575,19 +675,33 @@ public class FileSystem {
 
         fsFile = new RandomAccessFile(fsFilePath, "rw");
 
-        // Leer Superblock
+        // Leer Superblock. Para esto necesitamos saber el tamaño.
+        // El Superblock siempre se lee del offset 0, pero necesitamos saber cuánto
+        // leer.
+        // Asumimos un tamaño mínimo de lectura para sacar los datos iniciales, o mejor
+        // aún,
+        // leemos un bloque por defecto (4KB) inicialmente para obtener la estructura,
+        // ya que el Superblock siempre cabe en 1KB pero usamos un bloque completo.
+
         System.out.println("Leyendo Superblock...");
-        byte[] superblockData = readBlock(0);
-        superblock = Superblock.fromBytes(superblockData);
+
+        // Leemos temporalmente con tamaño por defecto para obtener el verdadero
+        byte[] tempBlock = new byte[FSConstants.DEFAULT_BLOCK_SIZE];
+        fsFile.seek(0);
+        fsFile.read(tempBlock); // read parcial si es más pequeño
+
+        superblock = Superblock.fromBytes(tempBlock);
 
         // Validar magic number
         if (!superblock.isValid()) {
             throw new IOException("Sistema de archivos inválido o corrupto (magic number incorrecto)");
         }
 
+        int blockSize = superblock.getBlockSize();
+
         System.out.println("  Sistema de archivos: " + superblock.getFsName());
         System.out.println("  Versión: " + superblock.getFsVersion());
-        System.out.println("  Tamaño de bloque: " + superblock.getBlockSize());
+        System.out.println("  Tamaño de bloque: " + blockSize);
         System.out.println("  Total de bloques: " + superblock.getTotalBlocks());
         System.out.println("  Bloques libres: " + superblock.getFreeBlocks());
         System.out.println("  Total de inodes: " + superblock.getTotalInodes());
@@ -600,16 +714,16 @@ public class FileSystem {
         // Leer Inode Bitmap
         System.out.println("\nCargando Inode Bitmap...");
         int inodeBitmapBytes = (superblock.getTotalInodes() + 7) / 8;
-        int inodeBitmapBlocks = (inodeBitmapBytes + FSConstants.BLOCK_SIZE - 1)
-                / FSConstants.BLOCK_SIZE;
+        int inodeBitmapBlocks = (inodeBitmapBytes + blockSize - 1)
+                / blockSize;
 
         byte[] inodeBitmapData = new byte[inodeBitmapBytes];
         for (int i = 0; i < inodeBitmapBlocks; i++) {
             byte[] block = readBlock(superblock.getInodeBitmapStart() + i);
-            int copyLength = Math.min(FSConstants.BLOCK_SIZE,
-                    inodeBitmapBytes - i * FSConstants.BLOCK_SIZE);
+            int copyLength = Math.min(blockSize,
+                    inodeBitmapBytes - i * blockSize);
             System.arraycopy(block, 0, inodeBitmapData,
-                    i * FSConstants.BLOCK_SIZE, copyLength);
+                    i * blockSize, copyLength);
         }
         inodeBitmap = Bitmap.fromBytes(inodeBitmapData, superblock.getTotalInodes());
         System.out.println("  Inode Bitmap cargado");
@@ -618,16 +732,16 @@ public class FileSystem {
         System.out.println("\nCargando Data Block Bitmap...");
         int dataBlocks = superblock.getTotalBlocks() - superblock.getDataBlocksStart();
         int dataBitmapBytes = (dataBlocks + 7) / 8;
-        int dataBitmapBlocks = (dataBitmapBytes + FSConstants.BLOCK_SIZE - 1)
-                / FSConstants.BLOCK_SIZE;
+        int dataBitmapBlocks = (dataBitmapBytes + blockSize - 1)
+                / blockSize;
 
         byte[] dataBitmapData = new byte[dataBitmapBytes];
         for (int i = 0; i < dataBitmapBlocks; i++) {
             byte[] block = readBlock(superblock.getDataBitmapStart() + i);
-            int copyLength = Math.min(FSConstants.BLOCK_SIZE,
-                    dataBitmapBytes - i * FSConstants.BLOCK_SIZE);
+            int copyLength = Math.min(blockSize,
+                    dataBitmapBytes - i * blockSize);
             System.arraycopy(block, 0, dataBitmapData,
-                    i * FSConstants.BLOCK_SIZE, copyLength);
+                    i * blockSize, copyLength);
         }
         dataBlockBitmap = Bitmap.fromBytes(dataBitmapData, dataBlocks);
         System.out.println("  Data Block Bitmap cargado");
