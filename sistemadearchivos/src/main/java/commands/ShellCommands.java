@@ -240,7 +240,11 @@ public class ShellCommands implements Runnable {
     @Command(name = "whereis", description = "Busca un archivo en el sistema")
     public void whereis(
             @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
+        try {
+            fsManager.whereis(filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**

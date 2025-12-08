@@ -915,6 +915,58 @@ public class FileSystemManager {
     }
 
     /**
+     * Busca la ubicación de un archivo en todo el sistema de archivos
+     */
+    public void whereis(String filename) throws IOException {
+        requireAuth();
+
+        List<String> results = new ArrayList<>();
+        Inode rootInode = fs.readInode(FSConstants.ROOT_INODE);
+
+        // Iniciar búsqueda desde la raíz "/"
+        searchRecursively(rootInode, "", filename, results);
+
+        if (results.isEmpty()) {
+            System.out.println("No se encontró el archivo: " + filename);
+        } else {
+            for (String path : results) {
+                System.out.println(path);
+            }
+        }
+    }
+
+    private void searchRecursively(Inode currentDir, String currentPath, String targetName, List<String> results)
+            throws IOException {
+        List<DirectoryEntry> entries = fs.readDirectoryEntries(currentDir);
+
+        for (DirectoryEntry entry : entries) {
+            if (entry.isFree())
+                continue;
+
+            String entryName = entry.getName();
+            if (entryName.equals(".") || entryName.equals(".."))
+                continue;
+
+            String fullPath = currentPath + "/" + entryName;
+
+            // Check if matches
+            if (entryName.equals(targetName)) {
+                results.add(fullPath);
+            }
+
+            // Recurse if directory
+            if (entry.getEntryType() == FSConstants.TYPE_DIRECTORY) {
+                // To avoid cycles or infinite loops, ensure we don't follow . or .. (already
+                // handled above)
+                // Also standard filesystems don't typically cycle unless hard links to dirs are
+                // allowed (not in this simple FS?)
+                Inode childInode = fs.readInode(entry.getInodeNumber());
+                searchRecursively(childInode, fullPath, targetName, results);
+            }
+        }
+    }
+
+    /**
      * Resuelve el inode del directorio actual
      */
     private Inode resolveCurrentDirectory() throws IOException {
