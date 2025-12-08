@@ -265,28 +265,32 @@ public class ShellCommands implements Runnable {
     }
 
     /**
-     * Crea un enlace hacia un archivo fuente.
+     * Crea un archivo con tamaño opcional.
      *
-     * @param source   Archivo original.
-     * @param linkPath Ruta del enlace.
+     * @param sizeKB   Tamaño en KB (opcional, default 0).
+     * @param filename Nombre del archivo.
      */
-    @Command(name = "ln", description = "Crea un enlace a un archivo")
-    public void ln(
-            @Parameters(index = "0", description = "Archivo fuente") String source,
-            @Parameters(index = "1", description = "Ruta del enlace") String linkPath) {
-        // TODO
+    @Command(name = "touch", description = "Crea un archivo")
+    public void touch(
+            @Option(names = { "-s", "--size" }, description = "Tamaño en KB", defaultValue = "0") int sizeKB,
+            @Parameters(index = "0", description = "Nombre del archivo") String filename) {
+        try {
+            fsManager.createFile(filename, sizeKB);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
-     * Crea un archivo vacío con el nombre especificado.
+     * Muestra estadísticas de un archivo.
      *
      * @param filename Nombre del archivo.
      */
-    @Command(name = "touch", description = "Crea un archivo vacío")
-    public void touch(
+    @Command(name = "stat", description = "Muestra estadísticas de un archivo")
+    public void stat(
             @Parameters(index = "0", description = "Nombre del archivo") String filename) {
         try {
-            fsManager.createFile(filename);
+            fsManager.stat(filename);
         } catch (IOException e) {
             System.err.println("Error: " + e.getMessage());
         }
@@ -297,11 +301,6 @@ public class ShellCommands implements Runnable {
      *
      * @param filename Nombre del archivo.
      */
-    @Command(name = "cat", description = "Muestra el contenido de un archivo")
-    public void cat(
-            @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
-    }
 
     /**
      * Cambia el propietario de un archivo o directorio.
@@ -353,6 +352,36 @@ public class ShellCommands implements Runnable {
             @Parameters(index = "1", description = "Archivo") String filename) {
         try {
             fsManager.chmod(permissions, filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Muestra el contenido de un archivo.
+     *
+     * @param filename Nombre del archivo.
+     */
+    @Command(name = "cat", description = "Muestra el contenido de un archivo")
+    public void cat(
+            @Parameters(index = "0", description = "Archivo") String filename) {
+        try {
+            fsManager.cat(filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Editor de texto simple.
+     *
+     * @param filename Nombre del archivo a editar.
+     */
+    @Command(name = "note", description = "Editor de texto simple")
+    public void note(
+            @Parameters(index = "0", description = "Archivo a editar") String filename) {
+        try {
+            fsManager.note(filename);
         } catch (IOException e) {
             System.err.println("Error: " + e.getMessage());
         }
@@ -420,9 +449,21 @@ public class ShellCommands implements Runnable {
      *
      * @param filename Nombre del archivo.
      */
-    @Command(name = "note", description = "Editor de texto simple")
-    public void note(
-            @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
+
+    /**
+     * Crea un enlace duro (hard link) a un archivo.
+     *
+     * @param sourcePath Ruta del archivo fuente.
+     * @param targetPath Ruta donde crear el enlace.
+     */
+    @Command(name = "ln", description = "Crea un enlace duro a un archivo")
+    public void ln(
+            @Parameters(index = "0", description = "Archivo fuente") String sourcePath,
+            @Parameters(index = "1", description = "Ruta del enlace") String targetPath) {
+        try {
+            fsManager.ln(sourcePath, targetPath);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 }

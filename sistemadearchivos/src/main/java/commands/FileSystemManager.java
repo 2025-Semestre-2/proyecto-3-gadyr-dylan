@@ -616,7 +616,17 @@ public class FileSystemManager {
     /**
      * Crea un archivo vacío en el directorio actual
      */
+    /**
+     * Crea un archivo vacío en el directorio actual
+     */
     public void createFile(String filename) throws IOException {
+        createFile(filename, 0);
+    }
+
+    /**
+     * Crea un archivo con tamaño específico (contenido dummy)
+     */
+    public void createFile(String filename, int sizeKB) throws IOException {
         requireAuth();
 
         // Validar nombre
@@ -629,6 +639,12 @@ public class FileSystemManager {
         // Verificar existencia
         if (directoryEntryExists(entries, filename)) {
             throw new IOException("El archivo '" + filename + "' ya existe");
+        }
+
+        // Verificar permisos de escritura en el directorio padre
+        // 2 = Write
+        if (!hasPermission(currentDirInode, 2)) {
+            throw new IOException("Permiso denegado: No se puede escribir en el directorio actual.");
         }
 
         // Buscar espacio libre en el directorio
@@ -647,23 +663,60 @@ public class FileSystemManager {
                 currentUser.getUserId(),
                 currentUser.getGroupId());
         newFileInode.setName(filename);
-        newFileInode.setFileSize(0);
         newFileInode.setLinkCount(1);
 
-        // Escribir nuevo inode
-        // Escribir nuevo inode
-        fs.writeInode(newFileInode);
+        if (sizeKB > 0) {
+            // Generar contenido dummy
+            int totalBytes = sizeKB * 1024;
+            byte[] dummyData = new byte[totalBytes];
+            for (int i = 0; i < totalBytes; i++) {
+                dummyData[i] = (byte) ('A' + (i % 26)); // A, B, C...
+            }
+            fs.writeFile(newFileInode, dummyData);
+        } else {
+            newFileInode.setFileSize(0);
+            fs.writeInode(newFileInode);
+        }
 
         // Agregar entrada en el directorio
         entries.set(freeEntryIndex, new DirectoryEntry(newInodeNum,
                 FSConstants.TYPE_FILE, filename));
         fs.writeDirectoryEntries(currentDirInode, entries);
 
-        // Guardar cambios
-        fs.unmount();
-        fs.mount();
+        System.out.println("Archivo creado: " + filename + " (Inode: " + newInodeNum + ")");
+    }
 
-        System.out.println("Archivo '" + filename + "' creado exitosamente");
+    /**
+     * Muestra estadísticas detalladas de un archivo, incluyendo bloques asignados.
+     */
+    public void stat(String filename) throws IOException {
+        requireAuth();
+
+        String targetPath = resolvePathString(filename);
+        Inode inode;
+        try {
+            inode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + filename);
+            return;
+        }
+
+        System.out.println("Archivo: " + filename);
+        System.out.println("  Inode: " + inode.getInodeNumber());
+        System.out.println("  Tipo:  " + (inode.isDirectory() ? "Directorio" : "Archivo"));
+        System.out.println("  Tamaño: " + inode.getFileSize() + " bytes");
+        System.out.println("  Bloques Asignados (Físicos): " + fs.getAllocatedBlocks(inode));
+
+        User owner = fs.getUserTable().get(inode.getOwnerUid());
+        Group group = fs.getGroupTable().get(inode.getGroupGid());
+
+        System.out.println("  Dueño: " + (owner != null ? owner.getUsername() : inode.getOwnerUid()) +
+                " (UID: " + inode.getOwnerUid() + ")");
+        System.out.println("  Grupo: " + (group != null ? group.getGroupName() : inode.getGroupGid()) +
+                " (GID: " + inode.getGroupGid() + ")");
+        System.out.println("  Permisos: " + formatPermissions(inode.getPermissions()));
+        System.out.println("  Creado: " + new java.util.Date(inode.getCreationTime()));
+        System.out.println("  Modificado: " + new java.util.Date(inode.getModificationTime()));
     }
 
     /**
@@ -1056,7 +1109,50 @@ public class FileSystemManager {
         System.out.println("Estado: " + (inode.getIsOpen() == 1 ? "Abierto" : "Cerrado"));
         System.out.println("Links: " + inode.getLinkCount());
         System.out.println("Creación: " + new java.util.Date(inode.getCreationTime()));
-        System.out.println("Ubicación (Bloque Directo 0): " + inode.getDirectBlocks()[0]);
+        System.out.println("Última modificación: " + new java.util.Date(inode.getModificationTime()));
+
+        // Mostrar bloques directos
+        System.out.print("Bloques Directos: [");
+        int[] directBlocks = inode.getDirectBlocks();
+        for (int i = 0; i < directBlocks.length; i++) {
+            if (directBlocks[i] != -1) {
+                System.out.print(directBlocks[i]);
+                if (i < directBlocks.length - 1 && directBlocks[i + 1] != -1) {
+                    System.out.print(", ");
+                }
+            }
+        }
+        System.out.println("]");
+
+        // Mostrar bloque indirecto
+        int indirectBlock = inode.getSingleIndirect();
+        if (indirectBlock != -1) {
+            System.out.println("Bloque Indirecto Simple: " + indirectBlock);
+
+            // Leer y mostrar los punteros del bloque indirecto
+            try {
+                int blockSize = fs.getSuperblock().getBlockSize();
+                int ptrsPerBlock = blockSize / 4; // Cada puntero es un int de 4 bytes
+
+                // Obtener punteros usando el método helper
+                java.util.List<Integer> validPointers = fs.getIndirectBlockPointers(inode);
+
+                System.out.println("  Capacidad: " + ptrsPerBlock + " punteros");
+                System.out.print("  Punteros a bloques de datos: [");
+
+                for (int i = 0; i < validPointers.size(); i++) {
+                    System.out.print(validPointers.get(i));
+                    if (i < validPointers.size() - 1) {
+                        System.out.print(", ");
+                    }
+                }
+                System.out.println("]");
+                System.out.println("  Punteros usados: " + validPointers.size() + "/" + ptrsPerBlock);
+
+            } catch (Exception e) {
+                System.out.println("  (Error leyendo punteros: " + e.getMessage() + ")");
+            }
+        }
     }
 
     /**
@@ -1109,6 +1205,111 @@ public class FileSystemManager {
                 searchRecursively(childInode, fullPath, targetName, results);
             }
         }
+    }
+
+    /**
+     * Crea un enlace duro (hard link) a un archivo
+     * 
+     * @param sourcePath Ruta del archivo fuente
+     * @param targetPath Ruta donde crear el enlace
+     */
+    public void ln(String sourcePath, String targetPath) throws IOException {
+        requireAuth();
+
+        // Resolver el archivo fuente
+        String resolvedSourcePath = resolvePathString(sourcePath);
+        Inode sourceInode;
+        try {
+            sourceInode = resolvePathInode(resolvedSourcePath);
+        } catch (IOException e) {
+            System.err.println("Archivo fuente no encontrado: " + sourcePath);
+            return;
+        }
+
+        // Verificar que el fuente sea un archivo (no directorio)
+        if (sourceInode.isDirectory()) {
+            System.err.println("Error: No se pueden crear enlaces duros a directorios.");
+            return;
+        }
+
+        // Verificar permisos de lectura en el archivo fuente
+        if (!hasPermission(sourceInode, 4)) {
+            System.err.println("Permiso denegado: No tiene permisos de lectura sobre " + sourcePath);
+            return;
+        }
+
+        // Resolver el directorio destino y nombre del enlace
+        String resolvedTargetPath = resolvePathString(targetPath);
+        String targetDirPath;
+        String linkName;
+
+        int lastSlash = resolvedTargetPath.lastIndexOf('/');
+        if (lastSlash == 0) {
+            // Está en la raíz
+            targetDirPath = "/";
+            linkName = resolvedTargetPath.substring(1);
+        } else if (lastSlash > 0) {
+            targetDirPath = resolvedTargetPath.substring(0, lastSlash);
+            linkName = resolvedTargetPath.substring(lastSlash + 1);
+        } else {
+            // Ruta relativa sin /
+            targetDirPath = currentDirectory;
+            linkName = resolvedTargetPath;
+        }
+
+        // Validar nombre del enlace
+        validateFileName(linkName);
+
+        // Resolver el directorio destino
+        Inode targetDirInode;
+        try {
+            targetDirInode = resolvePathInode(targetDirPath);
+        } catch (IOException e) {
+            System.err.println("Directorio destino no encontrado: " + targetDirPath);
+            return;
+        }
+
+        if (!targetDirInode.isDirectory()) {
+            System.err.println("Error: " + targetDirPath + " no es un directorio.");
+            return;
+        }
+
+        // Verificar permisos de escritura en el directorio destino
+        if (!hasPermission(targetDirInode, 2)) {
+            System.err.println("Permiso denegado: No tiene permisos de escritura en " + targetDirPath);
+            return;
+        }
+
+        // Leer entradas del directorio destino
+        List<DirectoryEntry> entries = fs.readDirectoryEntries(targetDirInode);
+
+        // Verificar que no exista ya un archivo con ese nombre
+        if (directoryEntryExists(entries, linkName)) {
+            System.err.println("Error: Ya existe un archivo llamado '" + linkName + "' en " + targetDirPath);
+            return;
+        }
+
+        // Buscar espacio libre en el directorio
+        int freeEntryIndex = findFreeDirectoryEntry(entries);
+        if (freeEntryIndex == -1) {
+            System.err.println("Error: No hay espacio en el directorio destino.");
+            return;
+        }
+
+        // Crear la nueva entrada apuntando al mismo inodo
+        entries.set(freeEntryIndex, new DirectoryEntry(
+                sourceInode.getInodeNumber(),
+                FSConstants.TYPE_FILE,
+                linkName));
+
+        // Escribir las entradas actualizadas
+        fs.writeDirectoryEntries(targetDirInode, entries);
+
+        // Incrementar el link count del inodo
+        sourceInode.setLinkCount(sourceInode.getLinkCount() + 1);
+        fs.writeInode(sourceInode);
+
+        System.out.println("Enlace creado: " + targetPath + " -> " + sourcePath);
     }
 
     /**
@@ -1385,6 +1586,138 @@ public class FileSystemManager {
         targetInode.setPermissions(newPerms);
         fs.writeInode(targetInode);
         System.out.println("Permisos cambiados a " + permissions + " (" + formatPermissions(newPerms) + ")");
+    }
+
+    /**
+     * Muestra el contenido de un archivo
+     */
+    public void cat(String filename) throws IOException {
+        requireAuth();
+
+        String targetPath = resolvePathString(filename);
+        Inode inode;
+        try {
+            inode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + filename);
+            return;
+        }
+
+        if (inode.isDirectory()) {
+            System.err.println(filename + " es un directorio.");
+            return;
+        }
+
+        // Verificar permisos de lectura (4)
+        if (!hasPermission(inode, 4)) {
+            System.err.println("Permiso denegado de lectura.");
+            return;
+        }
+
+        byte[] content = fs.readFile(inode);
+        System.out.println(new String(content));
+    }
+
+    /**
+     * Editor de texto simple
+     */
+    public void note(String filename) throws IOException {
+        requireAuth();
+
+        String targetPath = resolvePathString(filename);
+        Inode inode;
+        try {
+            inode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + filename);
+            return;
+        }
+
+        if (inode.isDirectory()) {
+            System.err.println(filename + " es un directorio.");
+            return;
+        }
+
+        // Verificar si está abierto en openFileTable
+        if (fs.isFileOpen(targetPath)) {
+            System.err.println("El archivo ya está abierto por otro proceso (openFile).");
+            return;
+        }
+
+        // Verificar permisos de escritura (2)
+        if (!hasPermission(inode, 2)) {
+            System.err.println("Permiso denegado de escritura.");
+            return;
+        }
+
+        // Leer contenido actual
+        byte[] currentBytes = fs.readFile(inode);
+        String currentContent = new String(currentBytes);
+
+        System.out.println("--- Editando: " + filename + " ---");
+        System.out.println("Comandos: Escribe tu texto. Para salir escribe ':x' en una nueva línea.");
+        System.out.println("--- Contenido Actual ---");
+        System.out.println(currentContent);
+        System.out.println("------------------------");
+
+        StringBuilder newContentBuilder = new StringBuilder(currentContent);
+        // Si no está vacío y no termina en newline, agregar uno para separar lo nuevo
+        if (newContentBuilder.length() > 0 && newContentBuilder.charAt(newContentBuilder.length() - 1) != '\n') {
+            newContentBuilder.append('\n');
+        }
+
+        Scanner inputScanner = new Scanner(System.in);
+        // Nota: no cerramos este scanner porque System.in debe seguir abierto para la
+        // shell
+
+        while (true) {
+            System.out.print("> ");
+            String line = inputScanner.nextLine();
+
+            if (line.equals(":x")) {
+                break;
+            }
+
+            newContentBuilder.append(line).append("\n");
+        }
+
+        System.out.print("¿Desea guardar los cambios? (S/n): ");
+        String confirm = inputScanner.nextLine();
+
+        if (confirm.equalsIgnoreCase("S") || confirm.isEmpty()) {
+            fs.writeFile(inode, newContentBuilder.toString().getBytes());
+            System.out.println("Cambios guardados.");
+        } else {
+            System.out.println("Cambios descartados.");
+        }
+    }
+
+    /**
+     * Verifica si el usuario actual tiene el permiso requerido
+     * bit: 4 (Read), 2 (Write), 1 (Execute)
+     */
+    private boolean hasPermission(Inode inode, int bit) {
+        if (isRoot())
+            return true;
+
+        int perms = inode.getPermissions(); // e.g. 64 (rw-r--) => 110 100
+
+        // Dueño (Bits 3-5)
+        if (inode.getOwnerUid() == currentUser.getUserId()) {
+            int ownerPerms = (perms >> 3) & 7;
+            return (ownerPerms & bit) != 0;
+        }
+
+        // Grupo (Bits 0-2)
+        Group fileGroup = fs.getGroupTable().get(inode.getGroupGid());
+        if (fileGroup != null && fileGroup.isMember(currentUser.getUserId())) {
+            int groupPerms = perms & 7;
+            return (groupPerms & bit) != 0;
+        }
+
+        // Si no es dueño ni del grupo -> No tiene acceso (en este modelo simple de 2
+        // dígitos)
+        return false;
     }
 
     /**

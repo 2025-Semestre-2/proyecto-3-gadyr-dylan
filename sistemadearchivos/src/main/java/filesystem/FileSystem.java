@@ -898,6 +898,147 @@ public class FileSystem {
     }
 
     /**
+     * Lee todo el contenido de un archivo
+     */
+    public byte[] readFile(Inode inode) throws IOException {
+        long fileSize = inode.getFileSize();
+        if (fileSize == 0)
+            return new byte[0];
+
+        // Bloques necesarios
+        long blockSize = superblock.getBlockSize(); // 1KB = 1024 bytes (ejemplo)
+        int numBlocks = (int) ((fileSize + blockSize - 1) / blockSize);
+
+        ByteBuffer fileContent = ByteBuffer.allocate((int) fileSize);
+
+        // Helper para leer N bloques lógicos
+        for (int i = 0; i < numBlocks; i++) {
+            int blockNum = getBlockNumber(inode, i); // Obtener bloque físico
+            if (blockNum == -1)
+                break; // Error o fin
+
+            byte[] blockData = readDataBlock(blockNum);
+
+            // Si es el último bloque, solo tomamos lo necesario
+            int bytesToRead = (int) blockSize;
+            if (i == numBlocks - 1) {
+                bytesToRead = (int) (fileSize % blockSize);
+                if (bytesToRead == 0 && fileSize > 0)
+                    bytesToRead = (int) blockSize;
+            }
+
+            fileContent.put(blockData, 0, bytesToRead);
+        }
+
+        return fileContent.array();
+    }
+
+    /**
+     * Escribe contenido a un archivo (sobrescribe)
+     */
+    public void writeFile(Inode inode, byte[] data) throws IOException {
+        long newSize = data.length;
+        long blockSize = superblock.getBlockSize(); // 1KB = 1024
+        int neededBlocks = (int) ((newSize + blockSize - 1) / blockSize);
+        if (newSize == 0)
+            neededBlocks = 0;
+
+        // Liberar bloques anteriores (simplificación: liberar todo y reasignar)
+        // En un sistema real optimizaríamos, pero para este proyecto es más seguro
+        // resetear
+        releaseInodeBlocks(inode);
+
+        // Asignar nuevos bloques y escribir
+        for (int i = 0; i < neededBlocks; i++) {
+            int blockNum = allocateDataBlock();
+            // Asignar bloque físico al bloque lógico i del inode
+            setBlockNumber(inode, i, blockNum);
+
+            // Preparar datos del bloque
+            byte[] blockData = new byte[(int) blockSize];
+            int start = i * (int) blockSize;
+            int length = Math.min((int) blockSize, data.length - start);
+            System.arraycopy(data, start, blockData, 0, length);
+
+            writeDataBlock(blockNum, blockData);
+        }
+
+        inode.setFileSize(newSize);
+        inode.setModificationTime(System.currentTimeMillis());
+        writeInode(inode);
+    }
+
+    /**
+     * Obtiene el número de bloque físico dado un índice lógico
+     */
+    private int getBlockNumber(Inode inode, int logicalBlockIndex) throws IOException {
+        // Directos
+        if (logicalBlockIndex < FSConstants.DIRECT_POINTERS) {
+            return inode.getDirectBlocks()[logicalBlockIndex];
+        }
+
+        // Indirecto Simple (apunta a 1 bloque que contiene punteros)
+        // Capacidad: BlockSize / 4 bytes (int)
+        int blockSize = superblock.getBlockSize();
+        int ptrsPerBlock = blockSize / 4;
+
+        int indirectIndex = logicalBlockIndex - FSConstants.DIRECT_POINTERS;
+
+        if (indirectIndex < ptrsPerBlock) {
+            int indirectBlock = inode.getSingleIndirect();
+            if (indirectBlock == -1)
+                return -1;
+
+            byte[] data = readDataBlock(indirectBlock);
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            return buffer.getInt(indirectIndex * 4);
+        }
+
+        // Indirecto Doble y Triple aquí si fuera necesario
+        return -1; // No implementado fully o fuera de rango
+    }
+
+    /**
+     * Asigna un bloque físico a un índice lógico
+     */
+    private void setBlockNumber(Inode inode, int logicalBlockIndex, int physicalBlock) throws IOException {
+        // Directos
+        if (logicalBlockIndex < FSConstants.DIRECT_POINTERS) {
+            inode.setDirectBlock(logicalBlockIndex, physicalBlock);
+            return;
+        }
+
+        int blockSize = superblock.getBlockSize();
+        int ptrsPerBlock = blockSize / 4;
+        int indirectIndex = logicalBlockIndex - FSConstants.DIRECT_POINTERS;
+
+        if (indirectIndex < ptrsPerBlock) {
+            int indirectBlock = inode.getSingleIndirect();
+            if (indirectBlock == -1) {
+                indirectBlock = allocateDataBlock();
+                inode.setSingleIndirect(indirectBlock);
+                // Inicializar con -1
+                byte[] initData = new byte[blockSize];
+                ByteBuffer buf = ByteBuffer.wrap(initData);
+                for (int j = 0; j < ptrsPerBlock; j++)
+                    buf.putInt(-1);
+                writeDataBlock(indirectBlock, initData);
+            }
+
+            // Leer bloque indirecto
+            byte[] data = readDataBlock(indirectBlock);
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+
+            // Actualizar puntero
+            buffer.putInt(indirectIndex * 4, physicalBlock);
+
+            // Escribir cambios
+            writeDataBlock(indirectBlock, buffer.array());
+            return;
+        }
+    }
+
+    /**
      * Retorna el nombre de la estrategia de asignación
      */
     private String getStrategyName(int strategy) {
@@ -918,5 +1059,97 @@ public class FileSystem {
      */
     public boolean isMounted() {
         return fsFile != null;
+    }
+
+    /**
+     * Lee un bloque de datos físico
+     */
+    private byte[] readDataBlock(int blockNum) throws IOException {
+        int blockSize = superblock.getBlockSize();
+        byte[] buffer = new byte[blockSize]; // Usamos el tamaño de bloque real
+        long offset = (long) blockNum * blockSize;
+
+        fsFile.seek(offset);
+        fsFile.read(buffer);
+
+        return buffer;
+    }
+
+    /**
+     * Escribe un bloque de datos físico
+     */
+    private void writeDataBlock(int blockNum, byte[] data) throws IOException {
+        int blockSize = superblock.getBlockSize();
+        long offset = (long) blockNum * blockSize;
+
+        fsFile.seek(offset);
+        // Si data es menor que blockSize, rellenar ceros? No necesariamente,
+        // fsFile.write escribe lo que hay.
+        // Pero para consistencia de bloques, mejor escribir blockSize.
+        if (data.length != blockSize) {
+            byte[] buffer = new byte[blockSize];
+            System.arraycopy(data, 0, buffer, 0, Math.min(data.length, blockSize));
+            fsFile.write(buffer);
+        } else {
+            fsFile.write(data);
+        }
+    }
+
+    /**
+     * Obtiene la lista de bloques físicos asignados a un inodo
+     */
+    public List<Integer> getAllocatedBlocks(Inode inode) throws IOException {
+        List<Integer> blocks = new ArrayList<>();
+
+        // Bloques directos
+        for (int block : inode.getDirectBlocks()) {
+            if (block != -1) {
+                blocks.add(block);
+            }
+        }
+
+        // Bloque indirecto simple
+        int indirectBlock = inode.getSingleIndirect();
+        if (indirectBlock != -1) {
+            // Leemos el bloque indirecto para sacar los punteros
+            byte[] data = readDataBlock(indirectBlock);
+            ByteBuffer buffer = ByteBuffer.wrap(data);
+            int ptrsPerBlock = superblock.getBlockSize() / 4;
+
+            for (int i = 0; i < ptrsPerBlock; i++) {
+                int ptr = buffer.getInt();
+                if (ptr != -1) {
+                    blocks.add(ptr);
+                }
+            }
+        }
+
+        return blocks;
+    }
+
+    /**
+     * Obtiene los punteros almacenados en el bloque indirecto simple
+     */
+    public List<Integer> getIndirectBlockPointers(Inode inode) throws IOException {
+        List<Integer> pointers = new ArrayList<>();
+
+        int indirectBlock = inode.getSingleIndirect();
+        if (indirectBlock == -1) {
+            return pointers; // No hay bloque indirecto
+        }
+
+        // Leer el bloque indirecto
+        byte[] data = readDataBlock(indirectBlock);
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+        int ptrsPerBlock = superblock.getBlockSize() / 4;
+
+        for (int i = 0; i < ptrsPerBlock; i++) {
+            int ptr = buffer.getInt();
+            if (ptr != -1) {
+                pointers.add(ptr);
+            }
+        }
+
+        return pointers;
     }
 }
