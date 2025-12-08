@@ -126,6 +126,23 @@ public class ShellCommands implements Runnable {
     }
 
     /**
+     * Modifica el grupo de un usuario.
+     *
+     * @param username  Nombre del usuario.
+     * @param groupName Nombre del grupo.
+     */
+    @Command(name = "usermod", description = "Cambia el grupo de un usuario")
+    public void usermod(
+            @Parameters(index = "0", description = "Nombre de usuario") String username,
+            @Parameters(index = "1", description = "Nombre del grupo") String groupName) {
+        try {
+            fsManager.usermod(username, groupName);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
+    }
+
+    /**
      * Muestra el usuario que está actualmente autenticado.
      */
     @Command(name = "whoami", description = "Muestra el usuario actual")
@@ -298,7 +315,11 @@ public class ShellCommands implements Runnable {
             @Option(names = { "-R" }, description = "Cambio recursivo") boolean recursive,
             @Parameters(index = "0", description = "Nuevo propietario") String owner,
             @Parameters(index = "1", description = "Archivo o directorio") String path) {
-        // TODO
+        try {
+            fsManager.chown(owner, path, recursive);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
@@ -313,7 +334,11 @@ public class ShellCommands implements Runnable {
             @Option(names = { "-R" }, description = "Cambio recursivo") boolean recursive,
             @Parameters(index = "0", description = "Nuevo grupo") String group,
             @Parameters(index = "1", description = "Archivo o directorio") String path) {
-        // TODO
+        try {
+            fsManager.chgrp(group, path, recursive);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
@@ -326,7 +351,11 @@ public class ShellCommands implements Runnable {
     public void chmod(
             @Parameters(index = "0", description = "Permisos (ej: 77)") String permissions,
             @Parameters(index = "1", description = "Archivo") String filename) {
-        // TODO
+        try {
+            fsManager.chmod(permissions, filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**

@@ -157,12 +157,66 @@ public class FileSystemManager {
         // Crear directorio del usuario
         createUserHomeDirectory(username, newUserId);
 
+        // Agregar al grupo "users" por defecto
+        Group usersGroup = fs.getGroupByName().get("users");
+        if (usersGroup != null) {
+            usersGroup.addMember(newUserId);
+        }
+
         // Guardar cambios
         fs.unmount();
         fs.mount();
 
-        System.out.println("Usuario '" + username + "' creado exitosamente");
+        System.out.println("Usuario " + username + " creado exitosamente.");
+        System.out.println("UID: " + newUser.getUserId());
+        System.out.println("Grupo: users (GID: 1)");
         System.out.println("Directorio home: " + homeDir);
+    }
+
+    /**
+     * Cambia el grupo de un usuario
+     */
+    public void usermod(String username, String groupName) throws IOException {
+        requireAuth();
+
+        // Solo root puede modificar usuarios
+        if (!isRoot()) {
+            System.err.println("Permiso denegado. Solo root puede modificar usuarios.");
+            return;
+        }
+
+        // Verificar que el usuario existe
+        if (!fs.getUserByName().containsKey(username)) {
+            System.err.println("Usuario no existe: " + username);
+            return;
+        }
+
+        // Verificar que el grupo existe
+        if (!fs.getGroupByName().containsKey(groupName)) {
+            System.err.println("Grupo no existe: " + groupName);
+            return;
+        }
+
+        User user = fs.getUserByName().get(username);
+        Group newGroup = fs.getGroupByName().get(groupName);
+        Group oldGroup = fs.getGroupTable().get(user.getGroupId());
+
+        // Remover del grupo anterior
+        if (oldGroup != null) {
+            oldGroup.removeMember(user.getUserId());
+        }
+
+        // Cambiar grupo del usuario
+        user.setGroupId(newGroup.getGroupId());
+
+        // Agregar al nuevo grupo
+        newGroup.addMember(user.getUserId());
+
+        // Guardar cambios
+        fs.unmount();
+        fs.mount();
+
+        System.out.println("Usuario " + username + " cambiado al grupo " + groupName);
     }
 
     /**
@@ -1105,7 +1159,12 @@ public class FileSystemManager {
             targetPath = currentDirectory;
         } else {
             targetPath = resolvePathString(path);
-            targetInode = resolvePathInode(targetPath);
+            try {
+                targetInode = resolvePathInode(targetPath);
+            } catch (IOException e) {
+                System.out.println("No se encuentra el archivo o directorio: " + path);
+                return;
+            }
         }
 
         if (!targetInode.isDirectory()) {
@@ -1116,8 +1175,11 @@ public class FileSystemManager {
         System.out.println("Contenido de " + targetPath + ":");
         List<DirectoryEntry> entries = fs.readDirectoryEntries(targetInode);
 
-        System.out.println("INODE\tTIPO\tTAMAÑO\tNOMBRE");
-        System.out.println("-----\t----\t------\t------");
+        // Header align
+        System.out.printf("%-6s %-6s %-10s %-10s %-10s %-8s %s%n",
+                "INODE", "TIPO", "PERMISOS", "DUEÑO", "GRUPO", "TAMAÑO", "NOMBRE");
+        System.out.printf("%-6s %-6s %-10s %-10s %-10s %-8s %s%n",
+                "-----", "----", "--------", "-----", "-----", "------", "------");
 
         for (DirectoryEntry entry : entries) {
             if (entry.isFree())
@@ -1126,9 +1188,20 @@ public class FileSystemManager {
             String typeStr = (entry.getEntryType() == FSConstants.TYPE_DIRECTORY) ? "DIR" : "FILE";
             Inode entryInode = fs.readInode(entry.getInodeNumber());
 
-            System.out.printf("%d\t%s\t%d\t%s%n",
+            String permissions = formatPermissions(entryInode.getPermissions());
+
+            User owner = fs.getUserTable().get(entryInode.getOwnerUid());
+            String ownerName = (owner != null) ? owner.getUsername() : String.valueOf(entryInode.getOwnerUid());
+
+            Group group = fs.getGroupTable().get(entryInode.getGroupGid());
+            String groupName = (group != null) ? group.getGroupName() : String.valueOf(entryInode.getGroupGid());
+
+            System.out.printf("%-6d %-6s %-10s %-10s %-10s %-8d %s%n",
                     entry.getInodeNumber(),
                     typeStr,
+                    permissions,
+                    ownerName,
+                    groupName,
                     entryInode.getFileSize(),
                     entry.getName());
         }
@@ -1154,6 +1227,164 @@ public class FileSystemManager {
                 }
             }
         }
+    }
+
+    private String formatPermissions(int permissions) {
+        StringBuilder sb = new StringBuilder();
+
+        // Owner (Bits 3-5)
+        int ownerPerms = (permissions >> 3) & 7;
+        sb.append((ownerPerms & 4) != 0 ? "r" : "-");
+        sb.append((ownerPerms & 2) != 0 ? "w" : "-");
+        sb.append((ownerPerms & 1) != 0 ? "x" : "-");
+
+        // Group (Bits 0-2)
+        int groupPerms = permissions & 7;
+        sb.append((groupPerms & 4) != 0 ? "r" : "-");
+        sb.append((groupPerms & 2) != 0 ? "w" : "-");
+        sb.append((groupPerms & 1) != 0 ? "x" : "-");
+
+        return sb.toString();
+    }
+
+    /**
+     * Cambia el propietario de un archivo o directorio
+     */
+    public void chown(String ownerName, String path, boolean recursive) throws IOException {
+        requireAuth();
+
+        // Validar usuario
+        if (!fs.getUserByName().containsKey(ownerName)) {
+            System.err.println("Usuario no existe: " + ownerName);
+            return;
+        }
+        int newUid = fs.getUserByName().get(ownerName).getUserId();
+
+        String targetPath = resolvePathString(path);
+        Inode targetInode;
+        try {
+            targetInode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + path);
+            return;
+        }
+
+        // Permisos: Solo root o el dueño actual pueden cambiar el dueño
+        if (!isRoot() && targetInode.getOwnerUid() != currentUser.getUserId()) {
+            System.err.println("Permiso denegado. Solo root o el dueño pueden cambiar el propietario.");
+            return;
+        }
+
+        changeOwnerRecursively(targetInode, newUid, recursive);
+        System.out.println("Propietario cambiado a " + ownerName);
+    }
+
+    private void changeOwnerRecursively(Inode inode, int newUid, boolean recursive) throws IOException {
+        inode.setOwnerUid(newUid);
+        fs.writeInode(inode);
+
+        if (recursive && inode.isDirectory()) {
+            List<DirectoryEntry> entries = fs.readDirectoryEntries(inode);
+            for (DirectoryEntry entry : entries) {
+                if (entry.isFree())
+                    continue;
+                String name = entry.getName();
+                if (name.equals(".") || name.equals(".."))
+                    continue;
+
+                Inode child = fs.readInode(entry.getInodeNumber());
+                changeOwnerRecursively(child, newUid, true);
+            }
+        }
+    }
+
+    /**
+     * Cambia el grupo de un archivo o directorio
+     */
+    public void chgrp(String groupName, String path, boolean recursive) throws IOException {
+        requireAuth();
+
+        // Validar grupo
+        if (!fs.getGroupByName().containsKey(groupName)) {
+            System.err.println("Grupo no existe: " + groupName);
+            return;
+        }
+        int newGid = fs.getGroupByName().get(groupName).getGroupId();
+
+        String targetPath = resolvePathString(path);
+        Inode targetInode;
+        try {
+            targetInode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + path);
+            return;
+        }
+
+        // Permisos
+        if (!isRoot() && targetInode.getOwnerUid() != currentUser.getUserId()) {
+            System.err.println("Permiso denegado.");
+            return;
+        }
+
+        changeGroupRecursively(targetInode, newGid, recursive);
+        System.out.println("Grupo cambiado a " + groupName);
+    }
+
+    private void changeGroupRecursively(Inode inode, int newGid, boolean recursive) throws IOException {
+        inode.setGroupGid(newGid);
+        fs.writeInode(inode);
+
+        if (recursive && inode.isDirectory()) {
+            List<DirectoryEntry> entries = fs.readDirectoryEntries(inode);
+            for (DirectoryEntry entry : entries) {
+                if (entry.isFree())
+                    continue;
+                String name = entry.getName();
+                if (name.equals(".") || name.equals(".."))
+                    continue;
+
+                Inode child = fs.readInode(entry.getInodeNumber());
+                changeGroupRecursively(child, newGid, true);
+            }
+        }
+    }
+
+    /**
+     * Cambia los permisos de un archivo (formato octal, ej: "77")
+     */
+    public void chmod(String permissions, String path) throws IOException {
+        requireAuth();
+
+        // Parse permissions "77" -> octal
+        // Validate length 2 and digits 0-7
+        if (permissions.length() != 2 || !permissions.matches("[0-7]+")) {
+            System.err.println("Formato inválido. Use 2 dígitos octales (ej: 77).");
+            return;
+        }
+
+        // 7 (owner) 7 (group) -> 111 111 (binary) -> 63 (decimal)
+        // Integer.parseInt(permissions, 8) handles standard octal but java parse "77"
+        // as decimal 77 if no radix
+        // We want base 8.
+        int newPerms = Integer.parseInt(permissions, 8);
+
+        String targetPath = resolvePathString(path);
+        Inode targetInode;
+        try {
+            targetInode = resolvePathInode(targetPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + path);
+            return;
+        }
+
+        if (!isRoot() && targetInode.getOwnerUid() != currentUser.getUserId()) {
+            System.err.println("Permiso denegado.");
+            return;
+        }
+
+        targetInode.setPermissions(newPerms);
+        fs.writeInode(targetInode);
+        System.out.println("Permisos cambiados a " + permissions + " (" + formatPermissions(newPerms) + ")");
     }
 
     /**

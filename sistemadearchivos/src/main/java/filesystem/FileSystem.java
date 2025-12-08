@@ -651,6 +651,13 @@ public class FileSystem {
         groupByName.put(rootGroup.getGroupName(), rootGroup);
         System.out.println("  Grupo root creado");
 
+        // Crear grupo "users" por defecto (GID = 1)
+        System.out.println("\nCreando grupo users...");
+        Group usersGroup = new Group(1, "users");
+        groupTable.put(usersGroup.getGroupId(), usersGroup);
+        groupByName.put(usersGroup.getGroupName(), usersGroup);
+        System.out.println("  Grupo users creado");
+
         // Paso 16: Guardar usuarios y grupos en bloques especiales
         saveUsersAndGroups();
 
