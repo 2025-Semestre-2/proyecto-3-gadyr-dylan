@@ -245,7 +245,7 @@ public class FileSystemManager {
         List<DirectoryEntry> rootEntries = fs.readDirectoryEntries(rootInode);
 
         int userDirInodeNum = -1;
-        for (DirectoryEntry entry : rootEntries) {
+        for (DirectoryEntry entry : rootEntries) {            
             if (!entry.isFree() && entry.getName().equals("user")) {
                 userDirInodeNum = entry.getInodeNumber();
                 break;

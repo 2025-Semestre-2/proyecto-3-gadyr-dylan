@@ -758,8 +758,8 @@ public class FileSystem {
     private void loadUsersAndGroups() throws IOException {
         System.out.println("\nCargando usuarios y grupos...");
 
-        int userBlockNumber = superblock.getDataBlocksStart() + 2;
-        int groupBlockNumber = superblock.getDataBlocksStart() + 3;
+        int userBlockNumber = superblock.getDataBlocksStart() + 4;
+        int groupBlockNumber = superblock.getDataBlocksStart() + 5;
 
         // Cargar usuarios
         byte[] userBlock = readBlock(userBlockNumber);
