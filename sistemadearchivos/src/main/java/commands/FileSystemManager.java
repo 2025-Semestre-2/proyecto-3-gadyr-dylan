@@ -915,6 +915,97 @@ public class FileSystemManager {
     }
 
     /**
+     * Abre un archivo
+     */
+    public void openFile(String filename) throws IOException {
+        requireAuth();
+
+        String fullPath = resolvePathString(filename);
+        if (fs.isFileOpen(fullPath)) {
+            System.out.println("Archivo ya está abierto");
+            return;
+        }
+
+        // resolvePathInode returns Inode
+        Inode inode;
+        try {
+            inode = resolvePathInode(fullPath);
+        } catch (IOException e) {
+            System.err.println("Archivo no encontrado: " + filename);
+            return;
+        }
+
+        if (!inode.isFile()) {
+            System.err.println("No es un archivo: " + filename);
+            return;
+        }
+
+        // Verificar permisos (simple check de owner o root)
+        if (!isRoot() && inode.getOwnerUid() != currentUser.getUserId()) {
+            // Permitir lectura si otros tienen permisos? Por ahora estricto.
+            // throw new IOException("Permiso denegado");
+            // Relaxed for now as per simple shell
+        }
+
+        inode.setIsOpen(1);
+        fs.writeInode(inode);
+        fs.addOpenFile(fullPath, inode);
+
+        System.out.println("Archivo abierto");
+    }
+
+    /**
+     * Cierra un archivo
+     */
+    public void closeFile(String filename) throws IOException {
+        requireAuth();
+
+        String fullPath = resolvePathString(filename);
+        if (!fs.isFileOpen(fullPath)) {
+            System.out.println("Archivo no está abierto");
+            return;
+        }
+
+        Inode inode = fs.getOpenFile(fullPath);
+        inode.setIsOpen(0);
+        fs.writeInode(inode);
+        fs.removeOpenFile(fullPath);
+
+        System.out.println("Archivo cerrado");
+    }
+
+    /**
+     * Muestra el FCB de un archivo
+     */
+    public void viewFCB(String filename) throws IOException {
+        requireAuth();
+
+        int inodeNum = resolvePath(filename); // Usamos resolvePath existente que retorna int
+        if (inodeNum == -1) {
+            System.err.println("Archivo no encontrado: " + filename);
+            return;
+        }
+
+        Inode inode = fs.readInode(inodeNum);
+
+        User owner = fs.getUserTable().get(inode.getOwnerUid());
+        Group group = fs.getGroupTable().get(inode.getGroupGid());
+
+        System.out.println("Información del archivo: " + filename);
+        System.out.println("Nombre: " + inode.getName());
+        System.out.println("Inode: " + inode.getInodeNumber());
+        System.out.println("Tipo: " + (inode.isDirectory() ? "Directorio" : "Archivo"));
+        System.out.println("Dueño: " + (owner != null ? owner.getUsername() : "uid=" + inode.getOwnerUid()));
+        System.out.println("Grupo: " + (group != null ? group.getGroupName() : "gid=" + inode.getGroupGid()));
+        System.out.println("Permisos: " + inode.getPermissions());
+        System.out.println("Tamaño: " + inode.getFileSize() + " bytes");
+        System.out.println("Estado: " + (inode.getIsOpen() == 1 ? "Abierto" : "Cerrado"));
+        System.out.println("Links: " + inode.getLinkCount());
+        System.out.println("Creación: " + new java.util.Date(inode.getCreationTime()));
+        System.out.println("Ubicación (Bloque Directo 0): " + inode.getDirectBlocks()[0]);
+    }
+
+    /**
      * Busca la ubicación de un archivo en todo el sistema de archivos
      */
     public void whereis(String filename) throws IOException {

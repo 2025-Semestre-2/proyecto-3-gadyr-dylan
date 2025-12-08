@@ -362,6 +362,23 @@ public class FileSystem {
         return groupByName;
     }
 
+    // Métodos para tabla de archivos abiertos
+    public void addOpenFile(String path, Inode inode) {
+        openFileTable.put(path, inode);
+    }
+
+    public void removeOpenFile(String path) {
+        openFileTable.remove(path);
+    }
+
+    public Inode getOpenFile(String path) {
+        return openFileTable.get(path);
+    }
+
+    public boolean isFileOpen(String path) {
+        return openFileTable.containsKey(path);
+    }
+
     /**
      * Formatea y crea el sistema de archivos
      *

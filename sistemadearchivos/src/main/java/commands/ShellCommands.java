@@ -337,7 +337,11 @@ public class ShellCommands implements Runnable {
     @Command(name = "openFile", description = "Abre un archivo")
     public void openFile(
             @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
+        try {
+            fsManager.openFile(filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
@@ -348,7 +352,11 @@ public class ShellCommands implements Runnable {
     @Command(name = "closeFile", description = "Cierra un archivo")
     public void closeFile(
             @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
+        try {
+            fsManager.closeFile(filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
@@ -359,7 +367,11 @@ public class ShellCommands implements Runnable {
     @Command(name = "viewFCB", description = "Muestra el FCB de un archivo")
     public void viewFCB(
             @Parameters(index = "0", description = "Nombre del archivo") String filename) {
-        // TODO
+        try {
+            fsManager.viewFCB(filename);
+        } catch (IOException e) {
+            System.err.println("Error: " + e.getMessage());
+        }
     }
 
     /**
