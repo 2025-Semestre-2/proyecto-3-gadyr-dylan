@@ -6,7 +6,7 @@ import java.util.List;
 
 /**
  *
- * @author gadyr
+ * @author gadyr y dylan
  */
 public class Group {
 

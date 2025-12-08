@@ -9,7 +9,7 @@ import java.util.Scanner;
 
 /**
  *
- * @author dylan
+ * @author dylan y Gadyr
  */
 public class FileSystemManager {
 
@@ -39,7 +39,6 @@ public class FileSystemManager {
         int strategy = FSConstants.ALLOC_INDEXED;
         System.out.println("El sistema de archivos usa la estrategia de asignación indexada.");
 
-        // Solicitar tamaño del bloque
         System.out.print("Ingrese el tamaño del bloque en KB (ej. 4, 8, 16): ");
         int blockSizeKB = 4;
         try {
@@ -54,7 +53,6 @@ public class FileSystemManager {
             blockSizeKB = 4;
         }
 
-        // Solicitar contraseña del usuario root
         System.out.print("\nEstablezca la contraseña para el usuario root: ");
         String password = scanner.nextLine();
 
@@ -69,11 +67,9 @@ public class FileSystemManager {
             throw new IOException("La contraseña no puede estar vacía");
         }
 
-        // Crear y formatear el sistema de archivos
         fs = new FileSystem(fsFilePath);
         fs.format(sizeMB, blockSizeKB, strategy, password);
 
-        // Establecer usuario actual como root
         currentUser = fs.getUserByName().get("root");
         currentDirectory = "/user/root/home";
 
@@ -267,7 +263,7 @@ public class FileSystemManager {
 
             fs.writeDirectoryEntries(userInode, userEntries);
 
-            // Agregar entrada en el directorio raíz
+            // Agregar entrada en el directorio raiz
             boolean added = false;
             for (int i = 0; i < rootEntries.size(); i++) {
                 if (rootEntries.get(i).isFree()) {
@@ -313,7 +309,7 @@ public class FileSystemManager {
         Inode userDirInode = fs.readInode(userDirInodeNum);
         List<DirectoryEntry> userDirEntries = fs.readDirectoryEntries(userDirInode);
 
-        // Paso 1: Crear el directorio /user/{username}
+        // Crear el directorio /user/{username}
         int userNameDirInodeNum = fs.allocateInode();
         int blockSize = fs.getSuperblock().getBlockSize();
 
@@ -349,7 +345,7 @@ public class FileSystemManager {
             userNameDirEntries.add(new DirectoryEntry());
         }
 
-        // Paso 2: Crear el directorio /user/{username}/home
+        //Crear el directorio /user/{username}/home
         int homeInodeNum = fs.allocateInode();
 
         Inode homeInode = new Inode(
@@ -381,12 +377,12 @@ public class FileSystemManager {
 
         fs.writeDirectoryEntries(homeInode, homeEntries);
 
-        // Paso 3: Agregar entrada "home" en /user/{username}
+        //Agregar entrada "home" en /user/{username}
         userNameDirEntries.set(2, new DirectoryEntry(homeInodeNum,
                 FSConstants.TYPE_DIRECTORY, "home"));
         fs.writeDirectoryEntries(userNameDirInode, userNameDirEntries);
 
-        // Paso 4: Agregar entrada del usuario en /user
+        //Agregar entrada del usuario en /user
         boolean added = false;
         for (int i = 0; i < userDirEntries.size(); i++) {
             if (userDirEntries.get(i).isFree()) {
@@ -435,8 +431,7 @@ public class FileSystemManager {
      * Cambia la contraseña de un usuario
      */
     public void changePassword(String username) throws IOException {
-        // Solo root puede cambiar contraseña de otros, o el mismo usuario su propia
-        // contraseña
+
         if (!isRoot() && !currentUser.getUsername().equals(username)) {
             throw new IOException("Permiso denegado");
         }
@@ -519,7 +514,7 @@ public class FileSystemManager {
     }
 
     /**
-     * Crea uno o más directorios en el directorio actual
+     * Crea uno o mas directorios en el directorio actual
      */
     public void mkdir(String[] dirNames) throws IOException {
         requireAuth();
@@ -528,7 +523,7 @@ public class FileSystemManager {
             throw new IOException("Debe especificar al menos un nombre de directorio");
         }
 
-        // Validar que estamos en un directorio válido
+        // Validar que estamos en un directorio valido
         Inode currentDirInode = resolveCurrentDirectory();
 
         List<DirectoryEntry> entries = fs.readDirectoryEntries(currentDirInode);
@@ -576,15 +571,12 @@ public class FileSystemManager {
                 // Crear entradas del nuevo directorio
                 List<DirectoryEntry> newDirEntries = new ArrayList<>();
 
-                // Entrada "." (apunta a sí mismo)
                 newDirEntries.add(new DirectoryEntry(newInodeNum,
                         FSConstants.TYPE_DIRECTORY, "."));
 
-                // Entrada ".." (apunta al directorio padre)
                 newDirEntries.add(new DirectoryEntry(currentDirInode.getInodeNumber(),
                         FSConstants.TYPE_DIRECTORY, ".."));
 
-                // Rellenar con entradas vacías
                 int entriesPerBlock = blockSize / FSConstants.DIR_ENTRY_SIZE;
                 for (int i = 2; i < entriesPerBlock; i++) {
                     newDirEntries.add(new DirectoryEntry());
@@ -592,12 +584,10 @@ public class FileSystemManager {
 
                 fs.writeDirectoryEntries(newDirInode, newDirEntries);
 
-                // Agregar entrada en el directorio padre
                 entries.set(freeEntryIndex, new DirectoryEntry(newInodeNum,
                         FSConstants.TYPE_DIRECTORY, dirName));
                 fs.writeDirectoryEntries(currentDirInode, entries);
 
-                // Incrementar link count del directorio padre (por la entrada ".." del hijo)
                 currentDirInode.setLinkCount(currentDirInode.getLinkCount() + 1);
                 fs.writeInode(currentDirInode);
 
@@ -614,17 +604,14 @@ public class FileSystemManager {
     }
 
     /**
-     * Crea un archivo vacío en el directorio actual
-     */
-    /**
-     * Crea un archivo vacío en el directorio actual
+     * Crea un archivo vacio en el directorio actual
      */
     public void createFile(String filename) throws IOException {
         createFile(filename, 0);
     }
 
     /**
-     * Crea un archivo con tamaño específico (contenido dummy)
+     * Crea un archivo con tamaño especifico 
      */
     public void createFile(String filename, int sizeKB) throws IOException {
         requireAuth();
@@ -642,7 +629,6 @@ public class FileSystemManager {
         }
 
         // Verificar permisos de escritura en el directorio padre
-        // 2 = Write
         if (!hasPermission(currentDirInode, 2)) {
             throw new IOException("Permiso denegado: No se puede escribir en el directorio actual.");
         }
@@ -666,7 +652,6 @@ public class FileSystemManager {
         newFileInode.setLinkCount(1);
 
         if (sizeKB > 0) {
-            // Generar contenido dummy
             int totalBytes = sizeKB * 1024;
             byte[] dummyData = new byte[totalBytes];
             for (int i = 0; i < totalBytes; i++) {
@@ -687,7 +672,7 @@ public class FileSystemManager {
     }
 
     /**
-     * Muestra estadísticas detalladas de un archivo, incluyendo bloques asignados.
+     * Muestra estadisticas detalladas de un archivo, incluyendo bloques asignados.
      */
     public void stat(String filename) throws IOException {
         requireAuth();
@@ -763,7 +748,7 @@ public class FileSystemManager {
                     continue;
                 }
 
-                // Procesar eliminación
+                // Procesar eliminacion
                 Inode targetInode = fs.readInode(targetEntry.getInodeNumber());
                 deleteRecursively(parentInode, targetInode, targetEntry.getName(), recursive);
 
@@ -781,7 +766,6 @@ public class FileSystemManager {
         }
 
         if (targetInode.isDirectory()) {
-            // Verificar si está vacío
             List<DirectoryEntry> entries = fs.readDirectoryEntries(targetInode);
             boolean isEmpty = true;
             for (DirectoryEntry entry : entries) {
@@ -796,7 +780,6 @@ public class FileSystemManager {
             }
 
             if (!isEmpty) {
-                // Borrado recursivo
                 for (DirectoryEntry entry : entries) {
                     if (!entry.isFree() && !entry.getName().equals(".") && !entry.getName().equals("..")) {
                         Inode childInode = fs.readInode(entry.getInodeNumber());
@@ -805,7 +788,6 @@ public class FileSystemManager {
                 }
             }
 
-            // Actualizar link count del padre (por ".." del hijo)
             parentInode.setLinkCount(parentInode.getLinkCount() - 1);
             fs.writeInode(parentInode);
         }
@@ -840,7 +822,7 @@ public class FileSystemManager {
     }
 
     /**
-     * Resuelve una ruta (absoluta o relativa) y retorna el número de inode
+     * Resuelve una ruta (absoluta o relativa) y retorna el numero de inode
      */
     private int resolvePath(String path) throws IOException {
         Inode currentInode;
@@ -861,8 +843,6 @@ public class FileSystemManager {
                 continue;
 
             if (part.equals("..")) {
-                // Handle parent directory
-                // For simplicity, we can read the ".." entry from the current directory
                 List<DirectoryEntry> entries = fs.readDirectoryEntries(currentInode);
                 boolean found = false;
                 for (DirectoryEntry entry : entries) {
@@ -899,7 +879,6 @@ public class FileSystemManager {
     public void mv(String sourcePath, String destPath) throws IOException {
         requireAuth();
 
-        // 1. Resolver Inode origen
         int sourceInodeNum = resolvePath(sourcePath);
         if (sourceInodeNum == -1) {
             System.err.println("mv: no se puede mover '" + sourcePath + "': No existe el archivo o directorio");
@@ -920,33 +899,26 @@ public class FileSystemManager {
             sourceParentInode = resolveCurrentDirectory();
         }
 
-        // 2. Resolver destino
         int destInodeNum = resolvePath(destPath);
         Inode destParentInode;
         String newName;
 
         if (destInodeNum != -1) {
-            // El destino existe...
             Inode destInode = fs.readInode(destInodeNum);
             if (destInode.isDirectory()) {
-                // Mover dentro del directorio existente
                 destParentInode = destInode;
                 newName = sourceName;
 
-                // Verificar si ya existe en destino
                 List<DirectoryEntry> destEntries = fs.readDirectoryEntries(destParentInode);
                 if (directoryEntryExists(destEntries, newName)) {
                     System.err.println("mv: destino '" + newName + "' ya existe en '" + destPath + "'");
                     return;
                 }
             } else {
-                // Es un archivo existente... sobreescribir?
-                // Implementación simple: Error
                 System.err.println("mv: destino '" + destPath + "' ya existe y no es un directorio");
                 return;
             }
         } else {
-            // El destino no existe, asumimos renombrado/movido a nuevo nombre
             if (destPath.contains("/")) {
                 String destParentPath = destPath.substring(0, destPath.lastIndexOf("/"));
                 if (destParentPath.isEmpty())
@@ -964,9 +936,7 @@ public class FileSystemManager {
             }
         }
 
-        // 3. Realizar movimiento
 
-        // Remover entrada del padre original
         removeEntryFromDirectory(sourceParentInode, sourceName);
 
         // Agregar entrada al nuevo padre
@@ -980,12 +950,6 @@ public class FileSystemManager {
         if (freeIndex != -1) {
             destEntries.set(freeIndex, newEntry);
         } else {
-            // Si el bloque está lleno, habría que asignar nuevo bloque, pero por ahora
-            // asumimos espacio o error
-            // Mejor implementación: expandir directorio si es necesario.
-            // Para simplificar, si no cabe, error (aunque create file expande, aquí
-            // deberíamos reusar lógica)
-            // Reusando espacio libre o añadiendo al final si hay espacio en bloque
             if (destEntries.size() < (fs.getSuperblock().getBlockSize() / FSConstants.DIR_ENTRY_SIZE)) {
                 destEntries.add(newEntry);
             } else {
@@ -995,9 +959,6 @@ public class FileSystemManager {
 
         fs.writeDirectoryEntries(destParentInode, destEntries);
 
-        // Si es directorio, actualizar ".." ?? No, ".." apunta al padre por número de
-        // inode.
-        // Si movemos un directorio, su ".." debería apuntar al nuevo padre.
         Inode sourceInode = fs.readInode(sourceInodeNum);
         if (sourceInode.isDirectory()) {
             List<DirectoryEntry> sourceEntries = fs.readDirectoryEntries(sourceInode);
@@ -1007,7 +968,6 @@ public class FileSystemManager {
                             new DirectoryEntry(destParentInode.getInodeNumber(), FSConstants.TYPE_DIRECTORY, ".."));
                     fs.writeDirectoryEntries(sourceInode, sourceEntries);
 
-                    // Actualizar link counts
                     sourceParentInode.setLinkCount(sourceParentInode.getLinkCount() - 1);
                     destParentInode.setLinkCount(destParentInode.getLinkCount() + 1);
 
@@ -1033,7 +993,6 @@ public class FileSystemManager {
             return;
         }
 
-        // resolvePathInode returns Inode
         Inode inode;
         try {
             inode = resolvePathInode(fullPath);
@@ -1047,11 +1006,8 @@ public class FileSystemManager {
             return;
         }
 
-        // Verificar permisos (simple check de owner o root)
         if (!isRoot() && inode.getOwnerUid() != currentUser.getUserId()) {
-            // Permitir lectura si otros tienen permisos? Por ahora estricto.
-            // throw new IOException("Permiso denegado");
-            // Relaxed for now as per simple shell
+            
         }
 
         inode.setIsOpen(1);
@@ -1134,7 +1090,6 @@ public class FileSystemManager {
                 int blockSize = fs.getSuperblock().getBlockSize();
                 int ptrsPerBlock = blockSize / 4; // Cada puntero es un int de 4 bytes
 
-                // Obtener punteros usando el método helper
                 java.util.List<Integer> validPointers = fs.getIndirectBlockPointers(inode);
 
                 System.out.println("  Capacidad: " + ptrsPerBlock + " punteros");
@@ -1190,17 +1145,12 @@ public class FileSystemManager {
 
             String fullPath = currentPath + "/" + entryName;
 
-            // Check if matches
             if (entryName.equals(targetName)) {
                 results.add(fullPath);
             }
 
-            // Recurse if directory
             if (entry.getEntryType() == FSConstants.TYPE_DIRECTORY) {
-                // To avoid cycles or infinite loops, ensure we don't follow . or .. (already
-                // handled above)
-                // Also standard filesystems don't typically cycle unless hard links to dirs are
-                // allowed (not in this simple FS?)
+                
                 Inode childInode = fs.readInode(entry.getInodeNumber());
                 searchRecursively(childInode, fullPath, targetName, results);
             }
@@ -1245,7 +1195,7 @@ public class FileSystemManager {
 
         int lastSlash = resolvedTargetPath.lastIndexOf('/');
         if (lastSlash == 0) {
-            // Está en la raíz
+            // Está en la raiz
             targetDirPath = "/";
             linkName = resolvedTargetPath.substring(1);
         } else if (lastSlash > 0) {
@@ -1376,7 +1326,6 @@ public class FileSystemManager {
         System.out.println("Contenido de " + targetPath + ":");
         List<DirectoryEntry> entries = fs.readDirectoryEntries(targetInode);
 
-        // Header align
         System.out.printf("%-6s %-6s %-10s %-10s %-10s %-8s %s%n",
                 "INODE", "TIPO", "PERMISOS", "DUEÑO", "GRUPO", "TAMAÑO", "NOMBRE");
         System.out.printf("%-6s %-6s %-10s %-10s %-10s %-8s %s%n",
@@ -1556,17 +1505,12 @@ public class FileSystemManager {
     public void chmod(String permissions, String path) throws IOException {
         requireAuth();
 
-        // Parse permissions "77" -> octal
-        // Validate length 2 and digits 0-7
+        
         if (permissions.length() != 2 || !permissions.matches("[0-7]+")) {
             System.err.println("Formato inválido. Use 2 dígitos octales (ej: 77).");
             return;
         }
 
-        // 7 (owner) 7 (group) -> 111 111 (binary) -> 63 (decimal)
-        // Integer.parseInt(permissions, 8) handles standard octal but java parse "77"
-        // as decimal 77 if no radix
-        // We want base 8.
         int newPerms = Integer.parseInt(permissions, 8);
 
         String targetPath = resolvePathString(path);
@@ -1608,7 +1552,6 @@ public class FileSystemManager {
             return;
         }
 
-        // Verificar permisos de lectura (4)
         if (!hasPermission(inode, 4)) {
             System.err.println("Permiso denegado de lectura.");
             return;
@@ -1638,13 +1581,11 @@ public class FileSystemManager {
             return;
         }
 
-        // Verificar si está abierto en openFileTable
         if (fs.isFileOpen(targetPath)) {
             System.err.println("El archivo ya está abierto por otro proceso (openFile).");
             return;
         }
 
-        // Verificar permisos de escritura (2)
         if (!hasPermission(inode, 2)) {
             System.err.println("Permiso denegado de escritura.");
             return;
@@ -1657,14 +1598,11 @@ public class FileSystemManager {
         if (!currentContent.isEmpty()) {
             String[] splitLines = currentContent.split("\n");
             for (String s : splitLines) {
-                // split puede dejar un string vacío si termina en \n, pero readFile lee bytes
-                // exactos.
-                // Si el archivo tiene texto, split funciona bien.
+                
                 lines.add(s);
             }
         }
 
-        // Mostrar contenido inicial con números de línea
         System.out.println("========= Editando: " + filename + " =========");
         System.out.println("--- Contenido del archivo ---");
         printLines(lines);        
@@ -1711,8 +1649,7 @@ public class FileSystemManager {
                             end = temp;
                         }
 
-                        // Eliminar de atrás para adelante para no afectar índices
-                        // Ajustar a 0-based
+                       
                         int startIdx = Math.max(0, start - 1);
                         int endIdx = Math.min(lines.size() - 1, end - 1);
 
@@ -1725,7 +1662,6 @@ public class FileSystemManager {
                             System.out.println("Rango inválido.");
                         }
                     } else {
-                        // Línea simple
                         int lineNum = Integer.parseInt(params);
                         int idx = lineNum - 1;
                         if (idx >= 0 && idx < lines.size()) {
@@ -1740,7 +1676,6 @@ public class FileSystemManager {
                     System.out.println("Error en comando :cl. Formato: :cl{n} o :cl{n-m}");
                 }
             } else {
-                // Agregar texto
                 lines.add(input);
             }
         }
@@ -1764,23 +1699,20 @@ public class FileSystemManager {
         if (isRoot())
             return true;
 
-        int perms = inode.getPermissions(); // e.g. 64 (rw-r--) => 110 100
+        int perms = inode.getPermissions(); 
 
-        // Dueño (Bits 3-5)
         if (inode.getOwnerUid() == currentUser.getUserId()) {
             int ownerPerms = (perms >> 3) & 7;
             return (ownerPerms & bit) != 0;
         }
 
-        // Grupo (Bits 0-2)
         Group fileGroup = fs.getGroupTable().get(inode.getGroupGid());
         if (fileGroup != null && fileGroup.isMember(currentUser.getUserId())) {
             int groupPerms = perms & 7;
             return (groupPerms & bit) != 0;
         }
 
-        // Si no es dueño ni del grupo -> No tiene acceso (en este modelo simple de 2
-        // dígitos)
+
         return false;
     }
 
@@ -1797,9 +1729,7 @@ public class FileSystemManager {
             throw new IOException("No es un directorio: " + path);
         }
 
-        // Si llegamos aquí, el directorio existe y es válido
         currentDirectory = newPath;
-        // Normalizar si es root para evitar "//"
         if (currentDirectory.length() > 1 && currentDirectory.endsWith("/")) {
             currentDirectory = currentDirectory.substring(0, currentDirectory.length() - 1);
         }
@@ -1816,11 +1746,8 @@ public class FileSystemManager {
 
         List<String> parts = new ArrayList<>();
 
-        // Si es absoluta, empezar desde vacío (root)
         if (path.startsWith("/")) {
-            // nada, parts está vacío
         } else {
-            // Si es relativa, empezar con las partes del directorio actual
             String[] currParts = currentDirectory.split("/");
             for (String p : currParts) {
                 if (!p.isEmpty())
@@ -1828,7 +1755,6 @@ public class FileSystemManager {
             }
         }
 
-        // Procesar la nueva ruta
         String[] newParts = path.split("/");
         for (String p : newParts) {
             if (p.isEmpty() || p.equals(".")) {
@@ -1842,7 +1768,6 @@ public class FileSystemManager {
             }
         }
 
-        // Reconstruir
         if (parts.isEmpty()) {
             return "/";
         }
@@ -1899,7 +1824,6 @@ public class FileSystemManager {
             throw new IOException("El nombre es demasiado largo (máximo 244 caracteres)");
         }
 
-        // Caracteres prohibidos
         if (name.contains("/") || name.contains("\0")) {
             throw new IOException("El nombre contiene caracteres inválidos");
         }

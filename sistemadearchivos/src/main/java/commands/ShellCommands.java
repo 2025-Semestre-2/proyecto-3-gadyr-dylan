@@ -11,7 +11,7 @@ import java.io.IOException;
  * Shell de comandos que simula un conjunto de utilidades básicas de un sistema
  * de archivos.
  *
- * @author dylan
+ * @author dylan y Gadyr
  */
 @Command(name = "", subcommands = { CommandLine.HelpCommand.class })
 public class ShellCommands implements Runnable {
@@ -282,7 +282,7 @@ public class ShellCommands implements Runnable {
     }
 
     /**
-     * Muestra estadísticas de un archivo.
+     * Muestra estadisticas de un archivo.
      *
      * @param filename Nombre del archivo.
      */
@@ -343,7 +343,7 @@ public class ShellCommands implements Runnable {
     /**
      * Cambia los permisos de un archivo usando notación numérica.
      *
-     * @param permissions Permisos en formato numérico (por ejemplo, 755).
+     * @param permissions Permisos en formato numerico (por ejemplo, 755).
      * @param filename    Archivo afectado.
      */
     @Command(name = "chmod", description = "Cambia los permisos de un archivo")

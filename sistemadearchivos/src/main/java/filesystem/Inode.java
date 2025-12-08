@@ -5,7 +5,7 @@ import java.util.Arrays;
 
 /**
  *
- * @author dylan
+ * @author dylan y Gadyr
  */
 public class Inode {
 

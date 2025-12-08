@@ -155,11 +155,9 @@ public class Main {
         public int handleExecutionException(Exception ex, CommandLine commandLine, 
                                            CommandLine.ParseResult parseResult) {
             
-            // Imprimir mensaje de error
             commandLine.getErr().println(commandLine.getColorScheme()
                                         .errorText("Error: " + ex.getMessage()));
             
-            // Si es un error de parámetros, mostrar ayuda
             if (ex instanceof CommandLine.ParameterException) {
                 commandLine.usage(commandLine.getOut());
             }

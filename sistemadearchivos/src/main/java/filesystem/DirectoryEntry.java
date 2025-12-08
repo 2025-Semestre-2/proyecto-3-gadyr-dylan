@@ -4,7 +4,7 @@ import java.nio.ByteBuffer;
 
 /**
  *
- * @author dylan
+ * @author dylan y Gadyr
  */
 public class DirectoryEntry {
 

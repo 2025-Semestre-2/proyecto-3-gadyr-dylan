@@ -2,7 +2,7 @@ package filesystem;
 
 /**
  *
- * @author dylan
+ * @author dylan y Gadyr
  */
 public class FSConstants {
     // Tamaños y configuración básica

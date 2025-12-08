@@ -69,8 +69,7 @@ public class Bitmap {
      */
     public byte[] toBytes() {
         byte[] bytes = bits.toByteArray();
-        // Asegurarse de que tenga el tamaño correcto
-        int neededSize = (size + 7) / 8; // Redondear hacia arriba
+        int neededSize = (size + 7) / 8; 
         if (bytes.length < neededSize) {
             byte[] result = new byte[neededSize];
             System.arraycopy(bytes, 0, result, 0, bytes.length);
