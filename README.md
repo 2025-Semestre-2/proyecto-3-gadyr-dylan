@@ -2,7 +2,7 @@
 # Sistema de Archivos
 ## Integrantes
 ### 2023205654 Dylan Montiel Zuñiga
-###  Gadyr
+###  2022327328 Gadyr Calderon Diaz
 
 ## Ejecutar en terminal para permitir UTF-8
 
