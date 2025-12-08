@@ -9,5 +9,5 @@
 ```powershell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 chcp 65001
-java -jar target/sistemadearchivos-1.0-SNAPSHOT.jar
+java -jar target/myFileSystem.jar
 ```
